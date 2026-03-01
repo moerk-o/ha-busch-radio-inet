@@ -1,0 +1,11 @@
+{
+  "domain": "busch_radio_inet",
+  "name": "Busch-Radio iNet",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/placeholder/busch-radio-inet",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/placeholder/busch-radio-inet/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
