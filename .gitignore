@@ -1,12 +1,16 @@
 # Lokale Entwicklungshelfer (nicht für Repo)
 test_udp.py
+udp_probe.py
+udp_probe_log.txt
 
 # Symlinks zu zentralen Guides (lokal, nicht Teil des Repos)
 RELEASE_GUIDE.md
 TESTING_GUIDE.md
 
-# Interne Projektdokumentation
+# Interne Projektdokumentation (lokal, nicht im Repo)
 docs/KONZEPT.md
+docs/KONZEPT_V2.md
+docs/UDP_PROTOKOLL.md
 
 # Python
 __pycache__/
