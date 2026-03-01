@@ -1,0 +1,20 @@
+# Lokale Entwicklungshelfer (nicht für Repo)
+test_udp.py
+
+# Symlinks zu zentralen Guides (lokal, nicht Teil des Repos)
+RELEASE_GUIDE.md
+TESTING_GUIDE.md
+
+# Interne Projektdokumentation
+docs/KONZEPT.md
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# pytest / Coverage
+.coverage
+htmlcov/
+.pytest_cache/
