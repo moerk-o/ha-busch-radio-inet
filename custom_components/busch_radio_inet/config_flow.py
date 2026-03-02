@@ -113,6 +113,11 @@ class BuschRadioINetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             host = user_input[CONF_HOST]
             port = user_input[CONF_PORT]
 
+            # Abort early if a config entry with the same host already exists.
+            # This prevents validate_connection from failing with OSError when
+            # port 4242 is already bound by the running listener.
+            self._async_abort_entries_match({CONF_HOST: host})
+
             try:
                 info = await validate_connection(host, port)
             except CannotConnect:

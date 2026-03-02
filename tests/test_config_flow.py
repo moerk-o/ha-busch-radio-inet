@@ -158,6 +158,52 @@ async def test_validate_connection_no_transport_to_close_on_oserror():
 # ===========================================================================
 
 
+async def test_config_flow_aborts_when_host_already_configured(
+    hass: HomeAssistant,
+) -> None:
+    """If the same host is already configured the flow must abort, not show cannot_connect."""
+    device_info = {"SERNO": "78C40E33745C"}
+    with patch(
+        "custom_components.busch_radio_inet.config_flow.validate_connection",
+        return_value=device_info,
+    ), patch(
+        "custom_components.busch_radio_inet.__init__.BuschRadioUDPListener"
+    ) as mock_listener_cls, patch(
+        "custom_components.busch_radio_inet.__init__.BuschRadioUDPClient"
+    ) as mock_client_cls:
+        mock_listener = MagicMock()
+        mock_listener.start = AsyncMock()
+        mock_listener_cls.return_value = mock_listener
+        mock_client = MagicMock()
+        mock_client.send_get = AsyncMock()
+        mock_client_cls.return_value = mock_client
+
+        # First setup – succeeds
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {"host": "192.168.1.179", "port": 4244, "name": "Radio"},
+        )
+
+    # Second attempt with same host – must abort before validate_connection runs
+    with patch(
+        "custom_components.busch_radio_inet.config_flow.validate_connection",
+    ) as mock_validate:
+        result2 = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result2 = await hass.config_entries.flow.async_configure(
+            result2["flow_id"],
+            {"host": "192.168.1.179", "port": 4244, "name": "Radio"},
+        )
+
+    assert result2["type"] == "abort"
+    assert result2["reason"] == "already_configured"
+    mock_validate.assert_not_called()
+
+
 async def test_config_flow_shows_form_on_first_step(hass: HomeAssistant):
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
