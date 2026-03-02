@@ -105,7 +105,11 @@ class BuschRadioMediaPlayer(MediaPlayerEntity):
     def state(self) -> MediaPlayerState | None:
         if not self._coordinator.is_ready:
             return None
-        return MediaPlayerState.ON if self._coordinator.power else MediaPlayerState.OFF
+        if not self._coordinator.power:
+            return MediaPlayerState.OFF
+        if self._coordinator.station_name:
+            return MediaPlayerState.PLAYING
+        return MediaPlayerState.IDLE
 
     # ------------------------------------------------------------------
     # Volume
@@ -174,6 +178,5 @@ class BuschRadioMediaPlayer(MediaPlayerEntity):
         for station in self._coordinator.station_list:
             if station["name"] == source:
                 await self._client.send_play(f"STATION:{station['id']}")
-                self._coordinator.set_station(station["id"], station["name"])
                 return
         _LOGGER.warning("Source '%s' not found in station list", source)
