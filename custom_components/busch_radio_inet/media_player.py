@@ -174,5 +174,6 @@ class BuschRadioMediaPlayer(MediaPlayerEntity):
         for station in self._coordinator.station_list:
             if station["name"] == source:
                 await self._client.send_play(f"STATION:{station['id']}")
+                self._coordinator.set_station(station["id"], station["name"])
                 return
         _LOGGER.warning("Source '%s' not found in station list", source)

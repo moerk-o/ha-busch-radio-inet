@@ -153,6 +153,13 @@ class BuschRadioCoordinator:
             self.muted = muted
             self._notify_callbacks()
 
+    def set_station(self, station_id: int, station_name: str) -> None:
+        """Optimistically update station after a PLAY command."""
+        if self.station_id != station_id or self.station_name != station_name:
+            self.station_id = station_id
+            self.station_name = station_name
+            self._notify_callbacks()
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
