@@ -107,6 +107,7 @@ class BuschRadioUDPListener:
     Parses incoming packets and:
     - Calls on_packet(fields) for GET/SET responses (ACK/NACK)
     - Sends follow-up GET commands for NOTIFICATION events
+    - Calls on_notification(event) for each NOTIFICATION event (optional)
     """
 
     def __init__(
@@ -114,10 +115,12 @@ class BuschRadioUDPListener:
         port: int,
         on_packet: Callable[[dict], None],
         client,
+        on_notification: Callable[[str], None] | None = None,
     ) -> None:
         self._port = port
         self._on_packet = on_packet
         self._client = client
+        self._on_notification = on_notification
         self._transport: asyncio.DatagramTransport | None = None
 
     async def start(self) -> None:
@@ -160,3 +163,6 @@ class BuschRadioUDPListener:
             await self._client.send_get("POWER_STATUS")
         else:
             _LOGGER.debug("Unknown NOTIFICATION event ignored: %s", event)
+
+        if event and self._on_notification:
+            self._on_notification(event)
