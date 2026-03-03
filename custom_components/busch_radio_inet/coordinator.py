@@ -31,6 +31,7 @@ class BuschRadioCoordinator:
         self.station_id: int | None = None
         self.station_name: str | None = None
         self.station_list: list[dict] = []   # [{'id', 'name', 'url'}, …]
+        self.media_title: str | None = None  # ICY StreamTitle (None = use station_name)
         self.device_name: str | None = None
         self.sw_version: str | None = None
         self.serial_number: str | None = None
@@ -153,12 +154,32 @@ class BuschRadioCoordinator:
             self.muted = muted
             self._notify_callbacks()
 
-    def set_station(self, station_id: int, station_name: str) -> None:
-        """Optimistically update station after a PLAY command."""
-        if self.station_id != station_id or self.station_name != station_name:
-            self.station_id = station_id
-            self.station_name = station_name
+    def set_media_title(self, title: str | None) -> None:
+        """Update media title from ICY metadata."""
+        if self.media_title != title:
+            self.media_title = title
             self._notify_callbacks()
+
+    def handle_notification(self, event: str) -> None:
+        """React to a raw NOTIFICATION event forwarded by the UDP listener."""
+        _LOGGER.debug("Coordinator handling notification: %s", event)
+        if event == "STATION_CHANGED":
+            self._on_station_changed()
+        elif event == "URL_IS_PLAYING":
+            self._on_url_is_playing()
+        elif event == "POWER_OFF":
+            self._on_power_off()
+
+    def _on_station_changed(self) -> None:
+        """Station is changing – clear stale ICY title (ICY wired in later commit)."""
+        self.set_media_title(None)
+
+    def _on_url_is_playing(self) -> None:
+        """Stream is stable – start ICY fetch (ICY wired in later commit)."""
+
+    def _on_power_off(self) -> None:
+        """Device switched off – clear ICY title (ICY wired in later commit)."""
+        self.set_media_title(None)
 
     # ------------------------------------------------------------------
     # Internal helpers

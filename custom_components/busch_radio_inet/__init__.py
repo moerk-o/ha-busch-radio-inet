@@ -36,6 +36,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         port=DEFAULT_LISTEN_PORT,
         on_packet=coordinator.handle_packet,
         client=client,
+        on_notification=coordinator.handle_notification,
     )
 
     try:
