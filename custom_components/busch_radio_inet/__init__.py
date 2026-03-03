@@ -17,9 +17,13 @@ from .const import (
     DOMAIN,
 )
 from .coordinator import BuschRadioCoordinator
-from .icy_client import IcyClient, IcyIntervalScheduler
+from .icy_client import IcyClient, IcyIntervalScheduler, IcyPersistentConnection
 from .udp_client import BuschRadioUDPClient
 from .udp_listener import BuschRadioUDPListener
+
+# Temporary Mode B switch – replaced by config entry options in Phase 3.
+# Set to "live" to use IcyPersistentConnection, "interval" for IcyIntervalScheduler.
+_ICY_MODE = "interval"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,14 +58,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await client.send_get("VOLUME")
     await client.send_get("PLAYING_MODE")
 
-    coordinator.set_icy_scheduler(
-        IcyIntervalScheduler(
+    if _ICY_MODE == "live":
+        icy_fetcher = IcyPersistentConnection(
+            hass=hass,
+            on_title=coordinator.set_media_title,
+        )
+    else:
+        icy_fetcher = IcyIntervalScheduler(
             hass=hass,
             fetcher=IcyClient(),
             on_title=coordinator.set_media_title,
             interval_seconds=60,  # Phase 3: read from config entry options
         )
-    )
+    coordinator.set_icy_fetcher(icy_fetcher)
     coordinator.start_polling()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
