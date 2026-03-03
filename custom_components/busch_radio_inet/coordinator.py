@@ -38,7 +38,7 @@ class BuschRadioCoordinator:
 
         self._callbacks: list[Callable[[], None]] = []
         self._cancel_poll: Callable | None = None
-        self._icy_scheduler = None  # set via set_icy_scheduler()
+        self._icy_fetcher = None  # set via set_icy_fetcher()
 
     # ------------------------------------------------------------------
     # Public API
@@ -171,31 +171,31 @@ class BuschRadioCoordinator:
         elif event == "POWER_OFF":
             self._on_power_off()
 
-    def set_icy_scheduler(self, scheduler) -> None:
-        """Attach the ICY interval scheduler (Mode A)."""
-        self._icy_scheduler = scheduler
+    def set_icy_fetcher(self, fetcher) -> None:
+        """Attach an ICY fetcher (IcyIntervalScheduler or IcyPersistentConnection)."""
+        self._icy_fetcher = fetcher
 
     def stop_icy(self) -> None:
         """Stop any running ICY fetch/timer."""
-        if self._icy_scheduler is not None:
-            self._icy_scheduler.stop()
+        if self._icy_fetcher is not None:
+            self._icy_fetcher.stop()
 
     def _on_station_changed(self) -> None:
         """Station is changing – stop ICY fetch and clear stale title."""
-        if self._icy_scheduler is not None:
-            self._icy_scheduler.stop()
+        if self._icy_fetcher is not None:
+            self._icy_fetcher.stop()
         self.set_media_title(None)
 
     def _on_url_is_playing(self) -> None:
         """Stream is stable – start ICY fetch for the current station."""
         url = self._get_current_stream_url()
-        if url and self._icy_scheduler is not None:
-            self._icy_scheduler.start(url)
+        if url and self._icy_fetcher is not None:
+            self._icy_fetcher.start(url)
 
     def _on_power_off(self) -> None:
         """Device switched off – stop ICY fetch and clear title."""
-        if self._icy_scheduler is not None:
-            self._icy_scheduler.stop()
+        if self._icy_fetcher is not None:
+            self._icy_fetcher.stop()
         self.set_media_title(None)
 
     def _get_current_stream_url(self) -> str | None:
