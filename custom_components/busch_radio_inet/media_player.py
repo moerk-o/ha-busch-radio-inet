@@ -154,6 +154,14 @@ class BuschRadioMediaPlayer(MediaPlayerEntity):
             return title.split(" - ", 1)[0]
         return None
 
+    @property
+    def media_image_url(self) -> str | None:
+        return self._coordinator.media_image_url
+
+    @property
+    def media_image_remotely_accessible(self) -> bool:
+        return True
+
     # ------------------------------------------------------------------
     # Commands
     # ------------------------------------------------------------------
