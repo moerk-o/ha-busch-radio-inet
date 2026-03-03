@@ -21,6 +21,7 @@ from typing import Protocol
 import aiohttp
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 
 _LOGGER = logging.getLogger(__name__)
@@ -62,6 +63,9 @@ class IcyClient:
     then closes the connection.
     """
 
+    def __init__(self, hass: HomeAssistant) -> None:
+        self._hass = hass
+
     async def fetch_title(self, url: str) -> str | None:
         """Connect to the stream, read the first ICY metadata block, disconnect.
 
@@ -70,12 +74,12 @@ class IcyClient:
         """
         try:
             timeout = aiohttp.ClientTimeout(total=_ICY_CONNECT_TIMEOUT)
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    url,
-                    headers={"Icy-MetaData": "1"},
-                    timeout=timeout,
-                ) as response:
+            session = async_get_clientsession(self._hass)
+            async with session.get(
+                url,
+                headers={"Icy-MetaData": "1"},
+                timeout=timeout,
+            ) as response:
                     metaint_str = response.headers.get("icy-metaint")
                     if not metaint_str:
                         _LOGGER.debug(
@@ -198,12 +202,12 @@ class IcyPersistentConnection:
     async def _run(self, url: str) -> None:
         """Main stream loop: connect, read audio/metadata until cancelled."""
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    url,
-                    headers={"Icy-MetaData": "1"},
-                    timeout=aiohttp.ClientTimeout(connect=_ICY_CONNECT_TIMEOUT),
-                ) as response:
+            session = async_get_clientsession(self._hass)
+            async with session.get(
+                url,
+                headers={"Icy-MetaData": "1"},
+                timeout=aiohttp.ClientTimeout(connect=_ICY_CONNECT_TIMEOUT),
+            ) as response:
                     metaint_str = response.headers.get("icy-metaint")
                     if not metaint_str:
                         _LOGGER.debug(

@@ -71,6 +71,20 @@ class BuschRadioCoordinator:
             self._cancel_poll()
             self._cancel_poll = None
 
+    def start_icy_if_playing(self) -> None:
+        """Start ICY fetch if the radio is already playing.
+
+        Called once after startup/reload to handle the case where the radio
+        was already playing when the integration loaded (no URL_IS_PLAYING
+        event is emitted for a stream that is already running).
+        """
+        if not self.power or not self.station_id:
+            return
+        url = self._get_current_stream_url()
+        if url and self._icy_fetcher is not None:
+            _LOGGER.debug("Radio already playing on startup – starting ICY fetch for %s", url)
+            self._icy_fetcher.start(url)
+
     def handle_packet(self, fields: dict) -> None:
         """Process a parsed UDP packet and update state.
 

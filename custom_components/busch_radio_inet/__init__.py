@@ -9,6 +9,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers.event import async_call_later
 
 from .const import (
     CONF_HOST,
@@ -66,17 +67,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     else:
         icy_fetcher = IcyIntervalScheduler(
             hass=hass,
-            fetcher=IcyClient(),
+            fetcher=IcyClient(hass),
             on_title=coordinator.set_media_title,
             interval_seconds=60,  # Phase 3: read from config entry options
         )
     coordinator.set_icy_fetcher(icy_fetcher)
     coordinator.start_polling()
 
+    # If the radio is already playing when the integration loads, no URL_IS_PLAYING
+    # event will arrive. Schedule a one-time check after startup queries have settled.
+    cancel_startup_icy = async_call_later(
+        hass, 5, lambda _now: coordinator.start_icy_if_playing()
+    )
+
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "coordinator": coordinator,
         "listener": listener,
         "client": client,
+        "cancel_startup_icy": cancel_startup_icy,
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -89,6 +97,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if unload_ok:
         data = hass.data[DOMAIN].pop(entry.entry_id)
+        data["cancel_startup_icy"]()
         data["coordinator"].stop_polling()
         data["coordinator"].stop_icy()
         data["listener"].stop()
