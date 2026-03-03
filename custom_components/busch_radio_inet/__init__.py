@@ -24,6 +24,7 @@ from .const import (
     DOMAIN,
     ICY_MODE_LIVE,
 )
+from .artwork_client import ArtworkClient
 from .coordinator import BuschRadioCoordinator
 from .icy_client import IcyClient, IcyIntervalScheduler, IcyPersistentConnection
 from .udp_client import BuschRadioUDPClient
@@ -88,6 +89,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     else:
         cancel_startup_icy = lambda: None  # noqa: E731
 
+    artwork_client = ArtworkClient(hass, "0.3.0")
+    coordinator.set_artwork_client(artwork_client)
+
     coordinator.start_polling()
 
     entry.add_update_listener(async_reload_entry)
@@ -117,6 +121,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         data["cancel_startup_icy"]()
         data["coordinator"].stop_polling()
         data["coordinator"].stop_icy()
+        data["coordinator"].stop_artwork()
         data["listener"].stop()
 
     return unload_ok
