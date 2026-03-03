@@ -8,9 +8,7 @@ RELEASE_GUIDE.md
 TESTING_GUIDE.md
 
 # Interne Projektdokumentation (lokal, nicht im Repo)
-docs/KONZEPT.md
-docs/KONZEPT_V2.md
-docs/UDP_PROTOKOLL.md
+docs/
 
 # Python
 __pycache__/

@@ -31,12 +31,14 @@ class BuschRadioCoordinator:
         self.station_id: int | None = None
         self.station_name: str | None = None
         self.station_list: list[dict] = []   # [{'id', 'name', 'url'}, …]
+        self.media_title: str | None = None  # ICY StreamTitle (None = use station_name)
         self.device_name: str | None = None
         self.sw_version: str | None = None
         self.serial_number: str | None = None
 
         self._callbacks: list[Callable[[], None]] = []
         self._cancel_poll: Callable | None = None
+        self._icy_fetcher = None  # set via set_icy_fetcher()
 
     # ------------------------------------------------------------------
     # Public API
@@ -68,6 +70,20 @@ class BuschRadioCoordinator:
         if self._cancel_poll is not None:
             self._cancel_poll()
             self._cancel_poll = None
+
+    def start_icy_if_playing(self) -> None:
+        """Start ICY fetch if the radio is already playing.
+
+        Called once after startup/reload to handle the case where the radio
+        was already playing when the integration loaded (no URL_IS_PLAYING
+        event is emitted for a stream that is already running).
+        """
+        if not self.power or not self.station_id:
+            return
+        url = self._get_current_stream_url()
+        if url and self._icy_fetcher is not None:
+            _LOGGER.debug("Radio already playing on startup – starting ICY fetch for %s", url)
+            self._icy_fetcher.start(url)
 
     def handle_packet(self, fields: dict) -> None:
         """Process a parsed UDP packet and update state.
@@ -153,12 +169,57 @@ class BuschRadioCoordinator:
             self.muted = muted
             self._notify_callbacks()
 
-    def set_station(self, station_id: int, station_name: str) -> None:
-        """Optimistically update station after a PLAY command."""
-        if self.station_id != station_id or self.station_name != station_name:
-            self.station_id = station_id
-            self.station_name = station_name
+    def set_media_title(self, title: str | None) -> None:
+        """Update media title from ICY metadata."""
+        if self.media_title != title:
+            self.media_title = title
             self._notify_callbacks()
+
+    def handle_notification(self, event: str) -> None:
+        """React to a raw NOTIFICATION event forwarded by the UDP listener."""
+        _LOGGER.debug("Coordinator handling notification: %s", event)
+        if event == "STATION_CHANGED":
+            self._on_station_changed()
+        elif event == "URL_IS_PLAYING":
+            self._on_url_is_playing()
+        elif event == "POWER_OFF":
+            self._on_power_off()
+
+    def set_icy_fetcher(self, fetcher) -> None:
+        """Attach an ICY fetcher (IcyIntervalScheduler or IcyPersistentConnection)."""
+        self._icy_fetcher = fetcher
+
+    def stop_icy(self) -> None:
+        """Stop any running ICY fetch/timer."""
+        if self._icy_fetcher is not None:
+            self._icy_fetcher.stop()
+
+    def _on_station_changed(self) -> None:
+        """Station is changing – stop ICY fetch and clear stale title."""
+        if self._icy_fetcher is not None:
+            self._icy_fetcher.stop()
+        self.set_media_title(None)
+
+    def _on_url_is_playing(self) -> None:
+        """Stream is stable – start ICY fetch for the current station."""
+        url = self._get_current_stream_url()
+        if url and self._icy_fetcher is not None:
+            self._icy_fetcher.start(url)
+
+    def _on_power_off(self) -> None:
+        """Device switched off – stop ICY fetch and clear title."""
+        if self._icy_fetcher is not None:
+            self._icy_fetcher.stop()
+        self.set_media_title(None)
+
+    def _get_current_stream_url(self) -> str | None:
+        """Return the stream URL for the currently playing station_id."""
+        if not self.station_id:
+            return None
+        for station in self.station_list:
+            if station["id"] == self.station_id:
+                return station.get("url")
+        return None
 
     # ------------------------------------------------------------------
     # Internal helpers
