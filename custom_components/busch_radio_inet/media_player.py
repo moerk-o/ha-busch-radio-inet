@@ -138,12 +138,21 @@ class BuschRadioMediaPlayer(MediaPlayerEntity):
         return [s["name"] for s in self._coordinator.station_list]
 
     # ------------------------------------------------------------------
-    # Media title
+    # Media title / artist
     # ------------------------------------------------------------------
 
     @property
     def media_title(self) -> str | None:
-        return self._coordinator.station_name
+        """Song title from ICY metadata, falling back to station name."""
+        return self._coordinator.media_title or self._coordinator.station_name
+
+    @property
+    def media_artist(self) -> str | None:
+        """Artist parsed from ICY StreamTitle when format is 'Artist - Title'."""
+        title = self._coordinator.media_title
+        if title and " - " in title:
+            return title.split(" - ", 1)[0]
+        return None
 
     # ------------------------------------------------------------------
     # Commands

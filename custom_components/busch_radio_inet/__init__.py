@@ -17,6 +17,7 @@ from .const import (
     DOMAIN,
 )
 from .coordinator import BuschRadioCoordinator
+from .icy_client import IcyClient, IcyIntervalScheduler
 from .udp_client import BuschRadioUDPClient
 from .udp_listener import BuschRadioUDPListener
 
@@ -53,6 +54,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await client.send_get("VOLUME")
     await client.send_get("PLAYING_MODE")
 
+    coordinator.set_icy_scheduler(
+        IcyIntervalScheduler(
+            hass=hass,
+            fetcher=IcyClient(),
+            on_title=coordinator.set_media_title,
+            interval_seconds=60,  # Phase 3: read from config entry options
+        )
+    )
     coordinator.start_polling()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
@@ -72,6 +81,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         data = hass.data[DOMAIN].pop(entry.entry_id)
         data["coordinator"].stop_polling()
+        data["coordinator"].stop_icy()
         data["listener"].stop()
 
     return unload_ok
