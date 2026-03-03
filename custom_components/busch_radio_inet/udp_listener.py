@@ -7,6 +7,7 @@ Binds to port 4242 and receives all packets from the device:
 
 import asyncio
 import logging
+import socket as _socket
 from collections.abc import Callable
 
 _LOGGER = logging.getLogger(__name__)
@@ -124,13 +125,35 @@ class BuschRadioUDPListener:
         self._transport: asyncio.DatagramTransport | None = None
 
     async def start(self) -> None:
-        """Bind to the listen port and start receiving packets."""
+        """Bind to the listen port and start receiving packets.
+
+        Uses SO_REUSEADDR so the socket can be rebound immediately after a
+        previous close (e.g. on integration reload).  Falls back to a short
+        retry loop in case the OS still needs a moment to release the port.
+        """
         loop = asyncio.get_running_loop()
-        self._transport, _ = await loop.create_datagram_endpoint(
-            lambda: _UDPProtocol(self._handle_message),
-            local_addr=("0.0.0.0", self._port),
-        )
-        _LOGGER.debug("UDP listener started on port %d", self._port)
+        last_exc: OSError | None = None
+        for attempt in range(5):
+            try:
+                sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+                sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+                sock.bind(("0.0.0.0", self._port))
+                sock.setblocking(False)
+                self._transport, _ = await loop.create_datagram_endpoint(
+                    lambda: _UDPProtocol(self._handle_message),
+                    sock=sock,
+                )
+                _LOGGER.debug("UDP listener started on port %d", self._port)
+                return
+            except OSError as exc:
+                last_exc = exc
+                _LOGGER.debug(
+                    "UDP port %d not yet free (attempt %d/5), retrying in 0.5 s …",
+                    self._port,
+                    attempt + 1,
+                )
+                await asyncio.sleep(0.5)
+        raise last_exc  # type: ignore[misc]
 
     def stop(self) -> None:
         """Close the UDP socket."""
