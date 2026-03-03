@@ -1,16 +1,22 @@
-"""ICY stream metadata client for Busch-Radio iNet – Mode A (interval-based).
+"""ICY stream metadata client for Busch-Radio iNet.
 
-Connects briefly to an Icecast/Shoutcast stream, reads the first metadata
-block to extract the current StreamTitle, then disconnects.
+Two fetch strategies are provided:
 
-The IcyIntervalScheduler wraps IcyClient to repeat the fetch automatically
-on a configurable interval, triggered by URL_IS_PLAYING notifications.
+Mode A – IcyIntervalScheduler (interval-based):
+  Connects briefly every N seconds, reads the first metadata block, disconnects.
+
+Mode B – IcyPersistentConnection (persistent/live):
+  Holds the HTTP connection open permanently, monitors every metadata block,
+  and notifies immediately when StreamTitle changes.
+
+Both implement the IcyFetcher protocol (start/stop interface).
 """
 
 import asyncio
 import logging
 from collections.abc import Callable
 from datetime import timedelta
+from typing import Protocol
 
 import aiohttp
 
@@ -20,6 +26,18 @@ from homeassistant.helpers.event import async_track_time_interval
 _LOGGER = logging.getLogger(__name__)
 
 _ICY_CONNECT_TIMEOUT = 10  # seconds
+
+
+class IcyFetcher(Protocol):
+    """Common interface for ICY fetch strategies (Mode A and B)."""
+
+    def start(self, url: str) -> None:
+        """Start fetching metadata from the given stream URL."""
+        ...
+
+    def stop(self) -> None:
+        """Stop fetching and cancel any running timer or connection."""
+        ...
 
 
 def _parse_stream_title(meta_text: str) -> str | None:
@@ -142,3 +160,78 @@ class IcyIntervalScheduler:
             return
         title = await self._fetcher.fetch_title(self._url)
         self._on_title(title)
+
+
+class IcyPersistentConnection:
+    """Mode B: holds the stream connection open and monitors every metadata block.
+
+    Notifies via on_title() immediately when StreamTitle changes.
+    Network usage: ~16 KB/s per stream (128 kbps). CPU: minimal (asyncio).
+
+    On stream disconnect or error: notifies with None and waits for the next
+    start() call (triggered by the next URL_IS_PLAYING notification).
+    """
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        on_title: Callable[[str | None], None],
+    ) -> None:
+        self._hass = hass
+        self._on_title = on_title
+        self._task: asyncio.Task | None = None
+        self._current_title: str | None = None
+
+    def start(self, url: str) -> None:
+        """Cancel any running connection and open a new one to the given URL."""
+        self.stop()
+        self._current_title = None
+        self._task = self._hass.loop.create_task(self._run(url))
+
+    def stop(self) -> None:
+        """Cancel the streaming task (closes the HTTP connection)."""
+        if self._task and not self._task.done():
+            self._task.cancel()
+        self._task = None
+        self._current_title = None
+
+    async def _run(self, url: str) -> None:
+        """Main stream loop: connect, read audio/metadata until cancelled."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url,
+                    headers={"Icy-MetaData": "1"},
+                    timeout=aiohttp.ClientTimeout(connect=_ICY_CONNECT_TIMEOUT),
+                ) as response:
+                    metaint_str = response.headers.get("icy-metaint")
+                    if not metaint_str:
+                        _LOGGER.debug(
+                            "Stream %s does not support ICY metadata", url
+                        )
+                        self._on_title(None)
+                        return
+                    metaint = int(metaint_str)
+                    await self._read_loop(response.content, metaint)
+        except asyncio.CancelledError:
+            pass  # Normal path: stop() was called
+        except Exception as exc:
+            _LOGGER.warning("ICY persistent connection failed: %s", exc)
+            self._on_title(None)
+            # No automatic retry – next URL_IS_PLAYING event will call start()
+
+    async def _read_loop(
+        self, stream: aiohttp.StreamReader, metaint: int
+    ) -> None:
+        """Continuously read audio bytes and check every metadata block."""
+        while True:
+            await stream.readexactly(metaint)
+            length_byte = await stream.readexactly(1)
+            meta_length = length_byte[0] * 16
+            if meta_length > 0:
+                meta_bytes = await stream.readexactly(meta_length)
+                meta_text = meta_bytes.decode("utf-8", errors="replace")
+                title = _parse_stream_title(meta_text)
+                if title != self._current_title:
+                    self._current_title = title
+                    self._on_title(title)
