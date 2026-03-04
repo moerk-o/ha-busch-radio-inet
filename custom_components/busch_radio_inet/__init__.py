@@ -12,11 +12,15 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.event import async_call_later
 
 from .const import (
+    CONF_EXPOSE_HTTP_SETTINGS,
     CONF_HOST,
+    CONF_HTTP_POLL_INTERVAL,
     CONF_ICY_ENABLED,
     CONF_ICY_INTERVAL,
     CONF_ICY_MODE,
     CONF_PORT,
+    DEFAULT_EXPOSE_HTTP_SETTINGS,
+    DEFAULT_HTTP_POLL_INTERVAL,
     DEFAULT_ICY_ENABLED,
     DEFAULT_ICY_INTERVAL,
     DEFAULT_ICY_MODE,
@@ -26,13 +30,16 @@ from .const import (
 )
 from .artwork_client import ArtworkClient
 from .coordinator import BuschRadioCoordinator
+from .http_client import HttpSettingsClient
+from .http_coordinator import HttpSettingsCoordinator
 from .icy_client import IcyClient, IcyIntervalScheduler, IcyPersistentConnection
 from .udp_client import BuschRadioUDPClient
 from .udp_listener import BuschRadioUDPListener
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["media_player"]
+ALWAYS_PLATFORMS = ["media_player"]
+HTTP_PLATFORMS = ["number", "select", "switch", "time", "button"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -89,21 +96,40 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     else:
         cancel_startup_icy = lambda: None  # noqa: E731
 
-    artwork_client = ArtworkClient(hass, "0.3.0")
+    artwork_client = ArtworkClient(hass, "0.4.0")
     coordinator.set_artwork_client(artwork_client)
+
+    expose_http = entry.options.get(CONF_EXPOSE_HTTP_SETTINGS, DEFAULT_EXPOSE_HTTP_SETTINGS)
+    http_poll_interval = int(
+        entry.options.get(CONF_HTTP_POLL_INTERVAL, DEFAULT_HTTP_POLL_INTERVAL)
+    )
+
+    http_coordinator: HttpSettingsCoordinator | None = None
+    if expose_http:
+        http_client = HttpSettingsClient(hass, host)
+        http_coordinator = HttpSettingsCoordinator(hass, http_client, http_poll_interval)
+        # Start in background – does not block main setup if HTTP is unavailable.
+        # Entities will be 'unavailable' until the first successful fetch.
+        hass.async_create_task(http_coordinator.async_refresh())
 
     coordinator.start_polling()
 
     entry.add_update_listener(async_reload_entry)
+
+    platforms = list(ALWAYS_PLATFORMS)
+    if expose_http:
+        platforms.extend(HTTP_PLATFORMS)
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "coordinator": coordinator,
         "listener": listener,
         "client": client,
         "cancel_startup_icy": cancel_startup_icy,
+        "http_coordinator": http_coordinator,
+        "platforms": platforms,
     }
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    await hass.config_entries.async_forward_entry_setups(entry, platforms)
     return True
 
 
@@ -114,7 +140,10 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a Busch-Radio iNet config entry."""
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    data = hass.data[DOMAIN][entry.entry_id]
+    unload_ok = await hass.config_entries.async_unload_platforms(
+        entry, data["platforms"]
+    )
 
     if unload_ok:
         data = hass.data[DOMAIN].pop(entry.entry_id)
@@ -123,5 +152,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         data["coordinator"].stop_icy()
         data["coordinator"].stop_artwork()
         data["listener"].stop()
+        # http_coordinator is a DataUpdateCoordinator – no explicit stop() needed
 
     return unload_ok
