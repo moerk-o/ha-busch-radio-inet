@@ -36,6 +36,10 @@ class _HttpSettingsTime(CoordinatorEntity[HttpSettingsCoordinator], TimeEntity):
         self._attr_unique_id = f"{entry.unique_id}_http_{hour_key}_{minute_key}"
 
     @property
+    def available(self) -> bool:
+        return super().available and self.coordinator.data is not None
+
+    @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(identifiers={(DOMAIN, self._entry.unique_id)})
 
