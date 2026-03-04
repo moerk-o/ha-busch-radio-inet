@@ -96,7 +96,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     else:
         cancel_startup_icy = lambda: None  # noqa: E731
 
-    artwork_client = ArtworkClient(hass, "0.4.0")
+    artwork_client = ArtworkClient(hass, "0.4.1")
     coordinator.set_artwork_client(artwork_client)
 
     expose_http = entry.options.get(CONF_EXPOSE_HTTP_SETTINGS, DEFAULT_EXPOSE_HTTP_SETTINGS)
