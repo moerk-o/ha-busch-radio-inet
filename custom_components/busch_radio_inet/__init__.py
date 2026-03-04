@@ -39,7 +39,7 @@ from .udp_listener import BuschRadioUDPListener
 _LOGGER = logging.getLogger(__name__)
 
 ALWAYS_PLATFORMS = ["media_player"]
-HTTP_PLATFORMS = ["number", "select", "switch", "time", "button"]
+HTTP_PLATFORMS = ["number", "select", "switch", "time", "button", "sensor"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
