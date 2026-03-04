@@ -21,12 +21,18 @@
   "options": {
     "step": {
       "init": {
-        "title": "Now Playing – Metadata Settings",
-        "description": "Configure ICY stream metadata to show the current song title. The update interval only applies to Interval mode.",
+        "title": "Integration Settings",
+        "description": "Configure ICY stream metadata and device settings exposure.",
         "data": {
           "icy_enabled": "Enable \"Now Playing\" metadata",
           "icy_mode": "Fetch mode",
-          "icy_interval": "Update interval (seconds)"
+          "icy_interval": "Update interval (seconds)",
+          "expose_http_settings": "Expose device settings as HA entities",
+          "http_poll_interval": "Settings poll interval (minutes)"
+        },
+        "data_description": {
+          "icy_mode": "Interval: reconnects periodically. Live: holds connection open (~16 KB/s).",
+          "http_poll_interval": "How often to read settings from the device. Only relevant when 'Expose device settings' is enabled."
         }
       }
     }
