@@ -51,4 +51,4 @@ class HttpSettingsCoordinator(DataUpdateCoordinator[dict[str, str]]):
             raise HomeAssistantError(
                 f"Failed to write settings {list(fields)}: {exc}"
             ) from exc
-        await self.async_request_refresh()
+        await self.async_refresh()
