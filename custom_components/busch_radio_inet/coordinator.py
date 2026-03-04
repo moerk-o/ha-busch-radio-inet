@@ -37,6 +37,7 @@ class BuschRadioCoordinator:
         self.device_name: str | None = None
         self.sw_version: str | None = None
         self.serial_number: str | None = None
+        self.energy_mode: str | None = None
 
         self._callbacks: list[Callable[[], None]] = []
         self._cancel_poll: Callable | None = None
@@ -104,11 +105,17 @@ class BuschRadioCoordinator:
 
         changed = False
 
-        # --- Power state (from GET POWER_STATUS or SET RADIO_ON/OFF ACK) ---
+        # --- Power state + energy mode (from GET POWER_STATUS) ---
         if "POWER" in fields:
             new_power = fields["POWER"] == "ON"
             if self.power != new_power:
                 self.power = new_power
+                changed = True
+
+        if "ENERGY_MODE" in fields:
+            new_mode = fields["ENERGY_MODE"]
+            if self.energy_mode != new_mode:
+                self.energy_mode = new_mode
                 changed = True
 
         # --- Power state from SET ACK (RADIO_ON / RADIO_OFF) ---
