@@ -12,13 +12,17 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 
 from .const import (
+    CONF_EXPOSE_HTTP_SETTINGS,
     CONF_HOST,
+    CONF_HTTP_POLL_INTERVAL,
     CONF_ICY_ENABLED,
     CONF_ICY_INTERVAL,
     CONF_ICY_MODE,
     CONF_NAME,
     CONF_PORT,
     CONNECT_TIMEOUT,
+    DEFAULT_EXPOSE_HTTP_SETTINGS,
+    DEFAULT_HTTP_POLL_INTERVAL,
     DEFAULT_ICY_ENABLED,
     DEFAULT_ICY_INTERVAL,
     DEFAULT_ICY_MODE,
@@ -170,6 +174,7 @@ class BuschRadioOptionsFlowHandler(config_entries.OptionsFlow):
         """Show the ICY options form."""
         if user_input is not None:
             user_input[CONF_ICY_INTERVAL] = int(user_input[CONF_ICY_INTERVAL])
+            user_input[CONF_HTTP_POLL_INTERVAL] = int(user_input[CONF_HTTP_POLL_INTERVAL])
             return self.async_create_entry(title="", data=user_input)
 
         opts = self._entry.options
@@ -208,6 +213,26 @@ class BuschRadioOptionsFlowHandler(config_entries.OptionsFlow):
                             step=10,
                             unit_of_measurement="s",
                             mode=selector.NumberSelectorMode.SLIDER,
+                        )
+                    ),
+                    vol.Required(
+                        CONF_EXPOSE_HTTP_SETTINGS,
+                        default=opts.get(
+                            CONF_EXPOSE_HTTP_SETTINGS, DEFAULT_EXPOSE_HTTP_SETTINGS
+                        ),
+                    ): selector.BooleanSelector(),
+                    vol.Required(
+                        CONF_HTTP_POLL_INTERVAL,
+                        default=opts.get(
+                            CONF_HTTP_POLL_INTERVAL, DEFAULT_HTTP_POLL_INTERVAL
+                        ),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=1,
+                            max=60,
+                            step=1,
+                            unit_of_measurement="min",
+                            mode=selector.NumberSelectorMode.BOX,
                         )
                     ),
                 }
