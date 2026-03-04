@@ -1,5 +1,7 @@
 """Button entities for Busch-Radio iNet HTTP settings."""
 
+import logging
+
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
@@ -11,6 +13,8 @@ from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .http_coordinator import HttpSettingsCoordinator
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class RefreshSettingsButton(
@@ -75,6 +79,12 @@ class SyncTimeButton(CoordinatorEntity[HttpSettingsCoordinator], ButtonEntity):
 
     async def async_press(self) -> None:
         now = dt_util.now()
+        _LOGGER.info(
+            "SyncTimeButton: syncing HA local time %02d:%02d (UTC offset %s) to device",
+            now.hour,
+            now.minute,
+            now.utcoffset(),
+        )
         await self.coordinator.async_set(
             {
                 "hr": str(now.hour),

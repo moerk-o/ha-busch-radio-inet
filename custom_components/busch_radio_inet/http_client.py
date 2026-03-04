@@ -66,6 +66,15 @@ class HttpSettingsClient:
         for cb in self._CHECKBOX_FIELDS:
             safe[cb] = "1" if safe.get(cb) == "1" else ""
 
+        _LOGGER.debug(
+            "async_post_general: posting %d fields to /en/general.cgi; "
+            "time-related: hr=%s mi=%s zs=%s",
+            len(safe),
+            safe.get("hr", "<missing>"),
+            safe.get("mi", "<missing>"),
+            safe.get("zs", "<missing>"),
+        )
+
         session = async_get_clientsession(self._hass)
         url = f"http://{self._host}/en/general.cgi"
         async with session.post(
@@ -74,4 +83,5 @@ class HttpSettingsClient:
             timeout=_REQUEST_TIMEOUT,
         ) as resp:
             resp.raise_for_status()
+            _LOGGER.debug("async_post_general: response HTTP %s", resp.status)
         # HTML response body is intentionally ignored
