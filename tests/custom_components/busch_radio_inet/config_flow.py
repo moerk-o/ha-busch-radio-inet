@@ -7,16 +7,31 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import callback
+from homeassistant.helpers import selector
 
 from .const import (
+    CONF_EXPOSE_HTTP_SETTINGS,
     CONF_HOST,
+    CONF_HTTP_POLL_INTERVAL,
+    CONF_ICY_ENABLED,
+    CONF_ICY_INTERVAL,
+    CONF_ICY_MODE,
     CONF_NAME,
     CONF_PORT,
     CONNECT_TIMEOUT,
+    DEFAULT_EXPOSE_HTTP_SETTINGS,
+    DEFAULT_HTTP_POLL_INTERVAL,
+    DEFAULT_ICY_ENABLED,
+    DEFAULT_ICY_INTERVAL,
+    DEFAULT_ICY_MODE,
     DEFAULT_LISTEN_PORT,
     DEFAULT_NAME,
     DEFAULT_PORT,
     DOMAIN,
+    ICY_MODE_INTERVAL,
+    ICY_MODE_LIVE,
 )
 from .udp_client import BuschRadioUDPClient
 
@@ -136,4 +151,90 @@ class BuschRadioINetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=STEP_USER_DATA_SCHEMA,
             errors=errors,
+        )
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: ConfigEntry,
+    ) -> "BuschRadioOptionsFlowHandler":
+        """Return the options flow handler."""
+        return BuschRadioOptionsFlowHandler(config_entry)
+
+
+class BuschRadioOptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle options for Busch-Radio iNet (ICY metadata settings)."""
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        self._entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Show the ICY options form."""
+        if user_input is not None:
+            user_input[CONF_ICY_INTERVAL] = int(user_input[CONF_ICY_INTERVAL])
+            user_input[CONF_HTTP_POLL_INTERVAL] = int(user_input[CONF_HTTP_POLL_INTERVAL])
+            return self.async_create_entry(title="", data=user_input)
+
+        opts = self._entry.options
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_ICY_ENABLED,
+                        default=opts.get(CONF_ICY_ENABLED, DEFAULT_ICY_ENABLED),
+                    ): selector.BooleanSelector(),
+                    vol.Required(
+                        CONF_ICY_MODE,
+                        default=opts.get(CONF_ICY_MODE, DEFAULT_ICY_MODE),
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[
+                                {
+                                    "value": ICY_MODE_INTERVAL,
+                                    "label": "Interval (every N seconds)",
+                                },
+                                {
+                                    "value": ICY_MODE_LIVE,
+                                    "label": "Live (persistent connection)",
+                                },
+                            ],
+                        )
+                    ),
+                    vol.Required(
+                        CONF_ICY_INTERVAL,
+                        default=opts.get(CONF_ICY_INTERVAL, DEFAULT_ICY_INTERVAL),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=10,
+                            max=300,
+                            step=10,
+                            unit_of_measurement="s",
+                            mode=selector.NumberSelectorMode.SLIDER,
+                        )
+                    ),
+                    vol.Required(
+                        CONF_EXPOSE_HTTP_SETTINGS,
+                        default=opts.get(
+                            CONF_EXPOSE_HTTP_SETTINGS, DEFAULT_EXPOSE_HTTP_SETTINGS
+                        ),
+                    ): selector.BooleanSelector(),
+                    vol.Required(
+                        CONF_HTTP_POLL_INTERVAL,
+                        default=opts.get(
+                            CONF_HTTP_POLL_INTERVAL, DEFAULT_HTTP_POLL_INTERVAL
+                        ),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=1,
+                            max=60,
+                            step=1,
+                            unit_of_measurement="min",
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                }
+            ),
         )

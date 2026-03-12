@@ -41,6 +41,8 @@ def make_coordinator(**kwargs):
     coord.sw_version = kwargs.get("sw_version", "03.12")
     coord.serial_number = kwargs.get("serial_number", "78C40E33745C")
     coord.is_ready = kwargs.get("is_ready", True)
+    coord.media_title = kwargs.get("media_title", None)
+    coord.media_image_url = kwargs.get("media_image_url", None)
     coord.register_callback = MagicMock()
     coord.unregister_callback = MagicMock()
     coord.set_muted = MagicMock()
@@ -108,9 +110,14 @@ def test_not_available_when_coordinator_not_ready():
 # ===========================================================================
 
 
-def test_state_on_when_power_true():
+def test_state_idle_when_power_true_no_station():
     player, _, _ = make_player(power=True, volume=10, is_ready=True)
-    assert player.state == MediaPlayerState.ON
+    assert player.state == MediaPlayerState.IDLE
+
+
+def test_state_playing_when_power_true_with_station():
+    player, _, _ = make_player(power=True, station_name="NDR 90.3", is_ready=True)
+    assert player.state == MediaPlayerState.PLAYING
 
 
 def test_state_off_when_power_false():
@@ -358,12 +365,14 @@ async def test_media_player_loads_via_hass(
 ) -> None:
     """The integration sets up cleanly and creates exactly one media_player."""
     with patch(
-        "custom_components.busch_radio_inet.__init__.BuschRadioUDPListener"
+        "custom_components.busch_radio_inet.BuschRadioUDPListener"
     ) as mock_listener_cls, patch(
-        "custom_components.busch_radio_inet.__init__.BuschRadioUDPClient"
+        "custom_components.busch_radio_inet.BuschRadioUDPClient"
     ) as mock_client_cls, patch(
         "custom_components.busch_radio_inet.coordinator.async_track_time_interval",
         return_value=MagicMock(),
+    ), patch(
+        "custom_components.busch_radio_inet.ArtworkClient"
     ):
         mock_listener = MagicMock()
         mock_listener.start = AsyncMock()
@@ -385,12 +394,14 @@ async def test_media_player_unloads_cleanly(
     hass: HomeAssistant, mock_config_entry
 ) -> None:
     with patch(
-        "custom_components.busch_radio_inet.__init__.BuschRadioUDPListener"
+        "custom_components.busch_radio_inet.BuschRadioUDPListener"
     ) as mock_listener_cls, patch(
-        "custom_components.busch_radio_inet.__init__.BuschRadioUDPClient"
+        "custom_components.busch_radio_inet.BuschRadioUDPClient"
     ) as mock_client_cls, patch(
         "custom_components.busch_radio_inet.coordinator.async_track_time_interval",
         return_value=MagicMock(),
+    ), patch(
+        "custom_components.busch_radio_inet.ArtworkClient"
     ):
         mock_listener = MagicMock()
         mock_listener.start = AsyncMock()
@@ -416,10 +427,12 @@ async def test_media_player_raises_config_entry_not_ready_on_port_in_use(
 ) -> None:
     """If port 4242 is in use, ConfigEntryNotReady must be raised."""
     with patch(
-        "custom_components.busch_radio_inet.__init__.BuschRadioUDPListener"
+        "custom_components.busch_radio_inet.BuschRadioUDPListener"
     ) as mock_listener_cls, patch(
-        "custom_components.busch_radio_inet.__init__.BuschRadioUDPClient"
-    ) as mock_client_cls:
+        "custom_components.busch_radio_inet.BuschRadioUDPClient"
+    ) as mock_client_cls, patch(
+        "custom_components.busch_radio_inet.ArtworkClient"
+    ):
         mock_listener = MagicMock()
         mock_listener.start = AsyncMock(side_effect=OSError("address in use"))
         mock_listener_cls.return_value = mock_listener
