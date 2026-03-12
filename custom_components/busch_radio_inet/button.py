@@ -79,7 +79,7 @@ class SyncTimeButton(CoordinatorEntity[HttpSettingsCoordinator], ButtonEntity):
 
     async def async_press(self) -> None:
         now = dt_util.now()
-        _LOGGER.info(
+        _LOGGER.debug(
             "SyncTimeButton: syncing HA local time %02d:%02d (UTC offset %s) to device",
             now.hour,
             now.minute,
