@@ -204,15 +204,18 @@ async def test_listener_start_binds_to_port():
     mock_loop.create_datagram_endpoint = AsyncMock(
         return_value=(mock_transport, MagicMock())
     )
+    mock_sock = MagicMock()
     with patch(
         "custom_components.busch_radio_inet.udp_listener.asyncio.get_running_loop",
         return_value=mock_loop,
+    ), patch(
+        "custom_components.busch_radio_inet.udp_listener._socket.socket",
+        return_value=mock_sock,
     ):
         await listener.start()
 
     mock_loop.create_datagram_endpoint.assert_called_once()
-    _, kwargs = mock_loop.create_datagram_endpoint.call_args
-    assert kwargs["local_addr"] == ("0.0.0.0", 4242)
+    mock_sock.bind.assert_called_once_with(("0.0.0.0", 4242))
 
 
 async def test_listener_stop_closes_transport():
@@ -222,9 +225,13 @@ async def test_listener_stop_closes_transport():
     mock_loop.create_datagram_endpoint = AsyncMock(
         return_value=(mock_transport, MagicMock())
     )
+    mock_sock = MagicMock()
     with patch(
         "custom_components.busch_radio_inet.udp_listener.asyncio.get_running_loop",
         return_value=mock_loop,
+    ), patch(
+        "custom_components.busch_radio_inet.udp_listener._socket.socket",
+        return_value=mock_sock,
     ):
         await listener.start()
 
