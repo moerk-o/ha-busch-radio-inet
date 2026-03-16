@@ -1,0 +1,27 @@
+name: Release
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release Busch-Radio iNet
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@v4
+
+      - name: Create zip package
+        run: |
+          cd "${{ github.workspace }}/custom_components/busch_radio_inet"
+          zip busch_radio_inet.zip -r ./
+
+      - name: Upload zip to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ github.workspace }}/custom_components/busch_radio_inet/busch_radio_inet.zip
