@@ -1,11 +1,12 @@
-"""Tests for BuschRadioUDPListener and parse_packet."""
+"""Tests for SharedUDPListener and parse_packet."""
 
 import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from custom_components.busch_radio_inet.udp_listener import (
-    BuschRadioUDPListener,
+    SharedUDPListener,
+    _UDPProtocol,
     parse_packet,
 )
 
@@ -184,27 +185,42 @@ class TestParsePacket:
 
 
 # ===========================================================================
-# BuschRadioUDPListener – integration tests
+# Helpers
 # ===========================================================================
 
-
-def make_listener(on_packet=None, client=None):
-    if on_packet is None:
-        on_packet = MagicMock()
-    if client is None:
-        client = MagicMock()
-        client.send_get = AsyncMock()
-    return BuschRadioUDPListener(port=4242, on_packet=on_packet, client=client), on_packet, client
+HOST1 = "192.168.1.10"
+HOST2 = "192.168.1.20"
 
 
-async def test_listener_start_binds_to_port():
-    listener, _, _ = make_listener()
+def make_listener():
+    return SharedUDPListener(port=4242)
+
+
+def make_client():
+    client = MagicMock()
+    client.send_get = AsyncMock()
+    return client
+
+
+def _start_listener_with_mock(listener):
+    """Patch socket + loop so listener.start() succeeds without real networking."""
     mock_transport = MagicMock()
     mock_loop = MagicMock()
     mock_loop.create_datagram_endpoint = AsyncMock(
         return_value=(mock_transport, MagicMock())
     )
     mock_sock = MagicMock()
+    return mock_transport, mock_loop, mock_sock
+
+
+# ===========================================================================
+# SharedUDPListener – lifecycle tests
+# ===========================================================================
+
+
+async def test_listener_start_binds_to_port():
+    listener = make_listener()
+    mock_transport, mock_loop, mock_sock = _start_listener_with_mock(listener)
     with patch(
         "custom_components.busch_radio_inet.udp_listener.asyncio.get_running_loop",
         return_value=mock_loop,
@@ -219,13 +235,8 @@ async def test_listener_start_binds_to_port():
 
 
 async def test_listener_stop_closes_transport():
-    listener, _, _ = make_listener()
-    mock_transport = MagicMock()
-    mock_loop = MagicMock()
-    mock_loop.create_datagram_endpoint = AsyncMock(
-        return_value=(mock_transport, MagicMock())
-    )
-    mock_sock = MagicMock()
+    listener = make_listener()
+    mock_transport, mock_loop, mock_sock = _start_listener_with_mock(listener)
     with patch(
         "custom_components.busch_radio_inet.udp_listener.asyncio.get_running_loop",
         return_value=mock_loop,
@@ -240,89 +251,187 @@ async def test_listener_stop_closes_transport():
 
 
 async def test_listener_stop_when_not_started_is_safe():
-    listener, _, _ = make_listener()
+    listener = make_listener()
     listener.stop()  # Should not raise
 
 
-async def test_response_packet_calls_on_packet():
-    on_packet = MagicMock()
-    listener, _, _ = make_listener(on_packet=on_packet)
+# ===========================================================================
+# SharedUDPListener – device registration
+# ===========================================================================
+
+
+def test_has_devices_false_when_empty():
+    listener = make_listener()
+    assert not listener.has_devices
+
+
+def test_has_devices_true_after_register():
+    listener = make_listener()
+    listener.register(HOST1, MagicMock(), make_client())
+    assert listener.has_devices
+
+
+def test_has_devices_false_after_unregister_last():
+    listener = make_listener()
+    listener.register(HOST1, MagicMock(), make_client())
+    listener.unregister(HOST1)
+    assert not listener.has_devices
+
+
+def test_unregister_unknown_host_is_safe():
+    listener = make_listener()
+    listener.unregister("10.0.0.99")  # Should not raise
+
+
+def test_two_devices_registered_independently():
+    listener = make_listener()
+    listener.register(HOST1, MagicMock(), make_client())
+    listener.register(HOST2, MagicMock(), make_client())
+    assert listener.has_devices
+    listener.unregister(HOST1)
+    assert listener.has_devices  # HOST2 still registered
+    listener.unregister(HOST2)
+    assert not listener.has_devices
+
+
+# ===========================================================================
+# SharedUDPListener – packet routing
+# ===========================================================================
+
+
+async def test_response_packet_routed_to_correct_device():
+    """A GET response from HOST1 must reach only HOST1's on_packet callback."""
+    listener = make_listener()
+    on_packet1 = MagicMock()
+    on_packet2 = MagicMock()
+    listener.register(HOST1, on_packet1, make_client())
+    listener.register(HOST2, on_packet2, make_client())
 
     msg = "COMMAND:GET\r\nPOWER_STATUS\r\nID:HA\r\nPOWER:ON\r\nRESPONSE:ACK\r\n"
-    listener._handle_message(msg)
+    listener._handle_datagram(msg, (HOST1, 4244))
 
-    on_packet.assert_called_once()
-    fields = on_packet.call_args[0][0]
-    assert fields["POWER"] == "ON"
+    on_packet1.assert_called_once()
+    on_packet2.assert_not_called()
+    assert on_packet1.call_args[0][0]["POWER"] == "ON"
+
+
+async def test_response_packet_from_host2_goes_to_host2_only():
+    listener = make_listener()
+    on_packet1 = MagicMock()
+    on_packet2 = MagicMock()
+    listener.register(HOST1, on_packet1, make_client())
+    listener.register(HOST2, on_packet2, make_client())
+
+    msg = "COMMAND:GET\r\nVOLUME\r\nID:HA\r\nVOLUME_SET:10\r\nRESPONSE:ACK\r\n"
+    listener._handle_datagram(msg, (HOST2, 4244))
+
+    on_packet2.assert_called_once()
+    on_packet1.assert_not_called()
+
+
+async def test_packet_from_unknown_ip_is_ignored():
+    listener = make_listener()
+    on_packet = MagicMock()
+    listener.register(HOST1, on_packet, make_client())
+
+    msg = "COMMAND:GET\r\nPOWER_STATUS\r\nID:HA\r\nPOWER:ON\r\nRESPONSE:ACK\r\n"
+    listener._handle_datagram(msg, ("10.0.0.99", 4244))  # Unknown IP
+
+    on_packet.assert_not_called()
+
+
+async def test_notification_routed_to_correct_device():
+    """A NOTIFICATION from HOST2 triggers HOST2's client and on_notification."""
+    listener = make_listener()
+    client1 = make_client()
+    client2 = make_client()
+    on_notif1 = MagicMock()
+    on_notif2 = MagicMock()
+    listener.register(HOST1, MagicMock(), client1, on_notif1)
+    listener.register(HOST2, MagicMock(), client2, on_notif2)
+
+    msg = f"COMMAND:NOTIFICATION\r\nIP:{HOST2}\r\nEVENT:VOLUME_CHANGED\r\nRESPONSE:ACK\r\n"
+    listener._handle_datagram(msg, (HOST2, 4244))
+    await asyncio.sleep(0)
+
+    client2.send_get.assert_called_once_with("VOLUME")
+    on_notif2.assert_called_once_with("VOLUME_CHANGED")
+    client1.send_get.assert_not_called()
+    on_notif1.assert_not_called()
+
+
+# ===========================================================================
+# SharedUDPListener – notification follow-up GETs
+# ===========================================================================
 
 
 async def test_notification_volume_changed_sends_get_volume():
-    client = MagicMock()
-    client.send_get = AsyncMock()
-    listener, _, _ = make_listener(client=client)
+    listener = make_listener()
+    client = make_client()
+    listener.register(HOST1, MagicMock(), client)
 
-    msg = "COMMAND:NOTIFICATION\r\nIP:192.168.1.179\r\nEVENT:VOLUME_CHANGED\r\nRESPONSE:ACK\r\n"
-    listener._handle_message(msg)
-    await asyncio.sleep(0)  # Let the created task run
+    msg = f"COMMAND:NOTIFICATION\r\nIP:{HOST1}\r\nEVENT:VOLUME_CHANGED\r\nRESPONSE:ACK\r\n"
+    listener._handle_datagram(msg, (HOST1, 4244))
+    await asyncio.sleep(0)
 
     client.send_get.assert_called_once_with("VOLUME")
 
 
 async def test_notification_station_changed_sends_get_playing_mode():
-    client = MagicMock()
-    client.send_get = AsyncMock()
-    listener, _, _ = make_listener(client=client)
+    listener = make_listener()
+    client = make_client()
+    listener.register(HOST1, MagicMock(), client)
 
-    msg = "COMMAND:NOTIFICATION\r\nIP:192.168.1.179\r\nEVENT:STATION_CHANGED\r\nRESPONSE:ACK\r\n"
-    listener._handle_message(msg)
+    msg = f"COMMAND:NOTIFICATION\r\nIP:{HOST1}\r\nEVENT:STATION_CHANGED\r\nRESPONSE:ACK\r\n"
+    listener._handle_datagram(msg, (HOST1, 4244))
     await asyncio.sleep(0)
 
     client.send_get.assert_called_once_with("PLAYING_MODE")
 
 
 async def test_notification_url_is_playing_sends_get_playing_mode():
-    client = MagicMock()
-    client.send_get = AsyncMock()
-    listener, _, _ = make_listener(client=client)
+    listener = make_listener()
+    client = make_client()
+    listener.register(HOST1, MagicMock(), client)
 
-    msg = "COMMAND:NOTIFICATION\r\nIP:192.168.1.179\r\nEVENT:URL_IS_PLAYING\r\nRESPONSE:ACK\r\n"
-    listener._handle_message(msg)
+    msg = f"COMMAND:NOTIFICATION\r\nIP:{HOST1}\r\nEVENT:URL_IS_PLAYING\r\nRESPONSE:ACK\r\n"
+    listener._handle_datagram(msg, (HOST1, 4244))
     await asyncio.sleep(0)
 
     client.send_get.assert_called_once_with("PLAYING_MODE")
 
 
 async def test_notification_power_on_sends_get_power_status():
-    client = MagicMock()
-    client.send_get = AsyncMock()
-    listener, _, _ = make_listener(client=client)
+    listener = make_listener()
+    client = make_client()
+    listener.register(HOST1, MagicMock(), client)
 
-    msg = "COMMAND:NOTIFICATION\r\nIP:192.168.1.179\r\nEVENT:POWER_ON\r\nRESPONSE:ACK\r\n"
-    listener._handle_message(msg)
+    msg = f"COMMAND:NOTIFICATION\r\nIP:{HOST1}\r\nEVENT:POWER_ON\r\nRESPONSE:ACK\r\n"
+    listener._handle_datagram(msg, (HOST1, 4244))
     await asyncio.sleep(0)
 
     client.send_get.assert_called_once_with("POWER_STATUS")
 
 
 async def test_notification_power_off_sends_get_power_status():
-    client = MagicMock()
-    client.send_get = AsyncMock()
-    listener, _, _ = make_listener(client=client)
+    listener = make_listener()
+    client = make_client()
+    listener.register(HOST1, MagicMock(), client)
 
-    msg = "COMMAND:NOTIFICATION\r\nIP:192.168.1.179\r\nEVENT:POWER_OFF\r\nRESPONSE:ACK\r\n"
-    listener._handle_message(msg)
+    msg = f"COMMAND:NOTIFICATION\r\nIP:{HOST1}\r\nEVENT:POWER_OFF\r\nRESPONSE:ACK\r\n"
+    listener._handle_datagram(msg, (HOST1, 4244))
     await asyncio.sleep(0)
 
     client.send_get.assert_called_once_with("POWER_STATUS")
 
 
 async def test_notification_unknown_event_does_not_raise():
-    client = MagicMock()
-    client.send_get = AsyncMock()
-    listener, _, _ = make_listener(client=client)
+    listener = make_listener()
+    client = make_client()
+    listener.register(HOST1, MagicMock(), client)
 
-    msg = "COMMAND:NOTIFICATION\r\nIP:192.168.1.179\r\nEVENT:UNKNOWN_EVENT\r\nRESPONSE:ACK\r\n"
-    listener._handle_message(msg)
+    msg = f"COMMAND:NOTIFICATION\r\nIP:{HOST1}\r\nEVENT:UNKNOWN_EVENT\r\nRESPONSE:ACK\r\n"
+    listener._handle_datagram(msg, (HOST1, 4244))
     await asyncio.sleep(0)
 
     client.send_get.assert_not_called()
@@ -330,46 +439,39 @@ async def test_notification_unknown_event_does_not_raise():
 
 async def test_notification_does_not_call_on_packet():
     on_packet = MagicMock()
-    client = MagicMock()
-    client.send_get = AsyncMock()
-    listener, _, _ = make_listener(on_packet=on_packet, client=client)
+    client = make_client()
+    listener = make_listener()
+    listener.register(HOST1, on_packet, client)
 
-    msg = "COMMAND:NOTIFICATION\r\nEVENT:VOLUME_CHANGED\r\nRESPONSE:ACK\r\n"
-    listener._handle_message(msg)
+    msg = f"COMMAND:NOTIFICATION\r\nIP:{HOST1}\r\nEVENT:VOLUME_CHANGED\r\nRESPONSE:ACK\r\n"
+    listener._handle_datagram(msg, (HOST1, 4244))
     await asyncio.sleep(0)
 
     on_packet.assert_not_called()
 
 
-async def test_invalid_utf8_datagram_does_not_raise():
-    listener, on_packet, _ = make_listener()
-    from custom_components.busch_radio_inet.udp_listener import _UDPProtocol
+# ===========================================================================
+# _UDPProtocol – low-level protocol tests
+# ===========================================================================
 
-    protocol = _UDPProtocol(listener._handle_message)
-    # Feed invalid UTF-8 bytes
+
+async def test_invalid_utf8_datagram_does_not_raise():
+    handler = MagicMock()
+    protocol = _UDPProtocol(handler)
     protocol.datagram_received(b"\xff\xfe invalid utf-8", ("192.168.1.1", 4242))
     # No exception should propagate
 
 
 async def test_protocol_error_received_does_not_raise():
-    listener, on_packet, _ = make_listener()
-    from custom_components.busch_radio_inet.udp_listener import _UDPProtocol
-
-    protocol = _UDPProtocol(listener._handle_message)
+    protocol = _UDPProtocol(MagicMock())
     protocol.error_received(OSError("test error"))
 
 
 async def test_protocol_connection_lost_with_exc_does_not_raise():
-    listener, on_packet, _ = make_listener()
-    from custom_components.busch_radio_inet.udp_listener import _UDPProtocol
-
-    protocol = _UDPProtocol(listener._handle_message)
+    protocol = _UDPProtocol(MagicMock())
     protocol.connection_lost(OSError("test"))
 
 
 async def test_protocol_connection_lost_without_exc_does_not_raise():
-    listener, on_packet, _ = make_listener()
-    from custom_components.busch_radio_inet.udp_listener import _UDPProtocol
-
-    protocol = _UDPProtocol(listener._handle_message)
+    protocol = _UDPProtocol(MagicMock())
     protocol.connection_lost(None)

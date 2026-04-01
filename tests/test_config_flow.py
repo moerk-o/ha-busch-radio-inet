@@ -167,7 +167,7 @@ async def test_config_flow_aborts_when_host_already_configured(
         "custom_components.busch_radio_inet.config_flow.validate_connection",
         return_value=device_info,
     ), patch(
-        "custom_components.busch_radio_inet.__init__.BuschRadioUDPListener"
+        "custom_components.busch_radio_inet.__init__.SharedUDPListener"
     ) as mock_listener_cls, patch(
         "custom_components.busch_radio_inet.__init__.BuschRadioUDPClient"
     ) as mock_client_cls:
@@ -219,7 +219,7 @@ async def test_config_flow_success_creates_entry(hass: HomeAssistant):
         "custom_components.busch_radio_inet.config_flow.validate_connection",
         return_value=device_info,
     ), patch(
-        "custom_components.busch_radio_inet.__init__.BuschRadioUDPListener"
+        "custom_components.busch_radio_inet.__init__.SharedUDPListener"
     ) as mock_listener_cls, patch(
         "custom_components.busch_radio_inet.__init__.BuschRadioUDPClient"
     ) as mock_client_cls:
@@ -250,7 +250,7 @@ async def test_config_flow_stores_correct_data(hass: HomeAssistant):
         "custom_components.busch_radio_inet.config_flow.validate_connection",
         return_value=device_info,
     ), patch(
-        "custom_components.busch_radio_inet.__init__.BuschRadioUDPListener"
+        "custom_components.busch_radio_inet.__init__.SharedUDPListener"
     ) as mock_listener_cls, patch(
         "custom_components.busch_radio_inet.__init__.BuschRadioUDPClient"
     ) as mock_client_cls:
@@ -309,7 +309,7 @@ async def test_config_flow_can_retry_after_error(hass: HomeAssistant):
         "custom_components.busch_radio_inet.config_flow.validate_connection",
         return_value=device_info,
     ), patch(
-        "custom_components.busch_radio_inet.__init__.BuschRadioUDPListener"
+        "custom_components.busch_radio_inet.__init__.SharedUDPListener"
     ) as mock_listener_cls, patch(
         "custom_components.busch_radio_inet.__init__.BuschRadioUDPClient"
     ) as mock_client_cls:
@@ -336,7 +336,7 @@ async def test_config_flow_duplicate_device_aborted(hass: HomeAssistant):
         "custom_components.busch_radio_inet.config_flow.validate_connection",
         return_value=device_info,
     ), patch(
-        "custom_components.busch_radio_inet.__init__.BuschRadioUDPListener"
+        "custom_components.busch_radio_inet.__init__.SharedUDPListener"
     ) as mock_listener_cls, patch(
         "custom_components.busch_radio_inet.__init__.BuschRadioUDPClient"
     ) as mock_client_cls:

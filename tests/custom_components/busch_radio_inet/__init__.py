@@ -1,7 +1,11 @@
 """Busch-Radio iNet – Home Assistant integration.
 
-Sets up the UDP listener, coordinator and media_player platform for a single
-Busch-Radio iNet device (model 8216 U).
+Sets up the shared UDP listener, coordinator and media_player platform for
+one or more Busch-Radio iNet devices (model 8216 U).
+
+A single SharedUDPListener is created on first device setup and shared by all
+config entries.  Each entry registers its device IP with the listener and
+unregisters on unload.  The listener is stopped when the last device is removed.
 """
 
 import logging
@@ -34,12 +38,14 @@ from .http_client import HttpSettingsClient
 from .http_coordinator import HttpSettingsCoordinator
 from .icy_client import IcyClient, IcyIntervalScheduler, IcyPersistentConnection
 from .udp_client import BuschRadioUDPClient
-from .udp_listener import BuschRadioUDPListener
+from .udp_listener import SharedUDPListener
 
 _LOGGER = logging.getLogger(__name__)
 
 ALWAYS_PLATFORMS = ["media_player"]
 HTTP_PLATFORMS = ["number", "select", "switch", "time", "button", "sensor"]
+
+_SHARED_LISTENER_KEY = "shared_listener"
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -47,23 +53,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     host: str = entry.data[CONF_HOST]
     port: int = entry.data[CONF_PORT]
 
+    domain_data = hass.data.setdefault(DOMAIN, {})
+
+    # Create the shared listener on first device; reuse it for subsequent devices.
+    if _SHARED_LISTENER_KEY not in domain_data:
+        shared_listener = SharedUDPListener(port=DEFAULT_LISTEN_PORT)
+        try:
+            await shared_listener.start()
+        except OSError as exc:
+            raise ConfigEntryNotReady(
+                f"Cannot bind to UDP port {DEFAULT_LISTEN_PORT}: {exc}"
+            ) from exc
+        domain_data[_SHARED_LISTENER_KEY] = shared_listener
+    else:
+        shared_listener: SharedUDPListener = domain_data[_SHARED_LISTENER_KEY]
+
     client = BuschRadioUDPClient(host, port)
     coordinator = BuschRadioCoordinator(hass, client)
-    listener = BuschRadioUDPListener(
-        port=DEFAULT_LISTEN_PORT,
+
+    shared_listener.register(
+        host,
         on_packet=coordinator.handle_packet,
         client=client,
         on_notification=coordinator.handle_notification,
     )
 
-    try:
-        await listener.start()
-    except OSError as exc:
-        raise ConfigEntryNotReady(
-            f"Cannot bind to UDP port {DEFAULT_LISTEN_PORT}: {exc}"
-        ) from exc
-
-    # Send startup queries – responses arrive via the listener
+    # Send startup queries – responses arrive via the shared listener
     await client.send_get("INFO_BLOCK")
     await client.send_get("ALL_STATION_INFO")
     await client.send_get("POWER_STATUS")
@@ -120,13 +135,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if expose_http:
         platforms.extend(HTTP_PLATFORMS)
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+    domain_data[entry.entry_id] = {
         "coordinator": coordinator,
-        "listener": listener,
         "client": client,
         "cancel_startup_icy": cancel_startup_icy,
         "http_coordinator": http_coordinator,
         "platforms": platforms,
+        "host": host,
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, platforms)
@@ -151,7 +166,16 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         data["coordinator"].stop_polling()
         data["coordinator"].stop_icy()
         data["coordinator"].stop_artwork()
-        data["listener"].stop()
+
+        # Unregister this device from the shared listener.
+        shared_listener: SharedUDPListener = hass.data[DOMAIN][_SHARED_LISTENER_KEY]
+        shared_listener.unregister(data["host"])
+
+        # Stop and remove the shared listener when the last device is gone.
+        if not shared_listener.has_devices:
+            shared_listener.stop()
+            del hass.data[DOMAIN][_SHARED_LISTENER_KEY]
+
         # http_coordinator is a DataUpdateCoordinator – no explicit stop() needed
 
     return unload_ok

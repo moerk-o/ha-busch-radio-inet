@@ -365,7 +365,7 @@ async def test_media_player_loads_via_hass(
 ) -> None:
     """The integration sets up cleanly and creates exactly one media_player."""
     with patch(
-        "custom_components.busch_radio_inet.BuschRadioUDPListener"
+        "custom_components.busch_radio_inet.SharedUDPListener"
     ) as mock_listener_cls, patch(
         "custom_components.busch_radio_inet.BuschRadioUDPClient"
     ) as mock_client_cls, patch(
@@ -394,7 +394,7 @@ async def test_media_player_unloads_cleanly(
     hass: HomeAssistant, mock_config_entry
 ) -> None:
     with patch(
-        "custom_components.busch_radio_inet.BuschRadioUDPListener"
+        "custom_components.busch_radio_inet.SharedUDPListener"
     ) as mock_listener_cls, patch(
         "custom_components.busch_radio_inet.BuschRadioUDPClient"
     ) as mock_client_cls, patch(
@@ -406,6 +406,9 @@ async def test_media_player_unloads_cleanly(
         mock_listener = MagicMock()
         mock_listener.start = AsyncMock()
         mock_listener.stop = MagicMock()
+        # After unregistering the only device, has_devices must be False
+        # so that async_unload_entry stops the shared listener.
+        mock_listener.has_devices = False
         mock_listener_cls.return_value = mock_listener
 
         mock_client = MagicMock()
@@ -427,7 +430,7 @@ async def test_media_player_raises_config_entry_not_ready_on_port_in_use(
 ) -> None:
     """If port 4242 is in use, ConfigEntryNotReady must be raised."""
     with patch(
-        "custom_components.busch_radio_inet.BuschRadioUDPListener"
+        "custom_components.busch_radio_inet.SharedUDPListener"
     ) as mock_listener_cls, patch(
         "custom_components.busch_radio_inet.BuschRadioUDPClient"
     ) as mock_client_cls, patch(
