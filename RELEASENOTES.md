@@ -1,3 +1,13 @@
+### 🐞 Bug Fixes
+
+- **Multi-device support** – Fixed an issue where adding a second device failed with "port already in use". The integration now uses a shared UDP listener that routes packets by source IP, supporting any number of devices simultaneously.
+
+**Full Changelog**: https://github.com/moerk-o/ha-busch-radio-inet/compare/v1.0.1...v1.0.2
+
+---
+
+# v1.0.1
+
 ### ✨ Features
 
 - **Media player entity** with turn on/off, volume control, mute, and source selection
