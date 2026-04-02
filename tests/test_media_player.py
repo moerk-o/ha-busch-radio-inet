@@ -448,3 +448,158 @@ async def test_media_player_raises_config_entry_not_ready_on_port_in_use(
         result = await hass.config_entries.async_setup(mock_config_entry.entry_id)
 
     assert result is False
+
+
+async def test_two_devices_share_one_listener(
+    hass: HomeAssistant, mock_config_entry
+) -> None:
+    """A second device reuses the existing SharedUDPListener (created only once)."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    entry2 = MockConfigEntry(
+        domain="busch_radio_inet",
+        data={"host": "192.168.1.180", "port": 4244, "name": "Busch-Radio iNet 2"},
+        unique_id="AABBCCDDEEFF",
+        version=1,
+    )
+
+    with patch(
+        "custom_components.busch_radio_inet.SharedUDPListener"
+    ) as mock_listener_cls, patch(
+        "custom_components.busch_radio_inet.BuschRadioUDPClient"
+    ) as mock_client_cls, patch(
+        "custom_components.busch_radio_inet.coordinator.async_track_time_interval",
+        return_value=MagicMock(),
+    ), patch(
+        "custom_components.busch_radio_inet.ArtworkClient"
+    ):
+        mock_listener = MagicMock()
+        mock_listener.start = AsyncMock()
+        mock_listener_cls.return_value = mock_listener
+
+        mock_client = MagicMock()
+        mock_client.send_get = AsyncMock()
+        mock_client_cls.return_value = mock_client
+
+        mock_config_entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+        entry2.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(entry2.entry_id)
+        await hass.async_block_till_done()
+
+    # Listener constructor called exactly once (shared singleton)
+    mock_listener_cls.assert_called_once()
+    # Each device registers itself
+    assert mock_listener.register.call_count == 2
+    # Both media_player entities created
+    assert len(hass.states.async_all("media_player")) == 2
+
+
+async def test_unloading_first_device_keeps_listener_running(
+    hass: HomeAssistant, mock_config_entry
+) -> None:
+    """Unloading one device while another is still active must not stop the listener."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    entry2 = MockConfigEntry(
+        domain="busch_radio_inet",
+        data={"host": "192.168.1.180", "port": 4244, "name": "Busch-Radio iNet 2"},
+        unique_id="AABBCCDDEEFF",
+        version=1,
+    )
+
+    with patch(
+        "custom_components.busch_radio_inet.SharedUDPListener"
+    ) as mock_listener_cls, patch(
+        "custom_components.busch_radio_inet.BuschRadioUDPClient"
+    ) as mock_client_cls, patch(
+        "custom_components.busch_radio_inet.coordinator.async_track_time_interval",
+        return_value=MagicMock(),
+    ), patch(
+        "custom_components.busch_radio_inet.ArtworkClient"
+    ):
+        mock_listener = MagicMock()
+        mock_listener.start = AsyncMock()
+        mock_listener.stop = MagicMock()
+        mock_listener.has_devices = True  # second device still registered after unload
+        mock_listener_cls.return_value = mock_listener
+
+        mock_client = MagicMock()
+        mock_client.send_get = AsyncMock()
+        mock_client_cls.return_value = mock_client
+
+        mock_config_entry.add_to_hass(hass)
+        await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+        entry2.add_to_hass(hass)
+        await hass.config_entries.async_setup(entry2.entry_id)
+        await hass.async_block_till_done()
+
+        assert await hass.config_entries.async_unload(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+    mock_listener.unregister.assert_called_once_with("192.168.1.179")
+    mock_listener.stop.assert_not_called()
+
+
+async def test_unloading_both_devices_stops_listener(
+    hass: HomeAssistant, mock_config_entry
+) -> None:
+    """Only after the last device is removed should the listener be stopped."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    entry2 = MockConfigEntry(
+        domain="busch_radio_inet",
+        data={"host": "192.168.1.180", "port": 4244, "name": "Busch-Radio iNet 2"},
+        unique_id="AABBCCDDEEFF",
+        version=1,
+    )
+
+    with patch(
+        "custom_components.busch_radio_inet.SharedUDPListener"
+    ) as mock_listener_cls, patch(
+        "custom_components.busch_radio_inet.BuschRadioUDPClient"
+    ) as mock_client_cls, patch(
+        "custom_components.busch_radio_inet.coordinator.async_track_time_interval",
+        return_value=MagicMock(),
+    ), patch(
+        "custom_components.busch_radio_inet.ArtworkClient"
+    ):
+        mock_listener = MagicMock()
+        mock_listener.start = AsyncMock()
+        mock_listener.stop = MagicMock()
+        mock_listener.has_devices = True  # starts with both devices
+        mock_listener_cls.return_value = mock_listener
+
+        # After second unregister call, has_devices becomes False → listener must stop
+        call_count = [0]
+
+        def on_unregister(*_args):
+            call_count[0] += 1
+            if call_count[0] >= 2:
+                mock_listener.has_devices = False
+
+        mock_listener.unregister.side_effect = on_unregister
+
+        mock_client = MagicMock()
+        mock_client.send_get = AsyncMock()
+        mock_client_cls.return_value = mock_client
+
+        mock_config_entry.add_to_hass(hass)
+        await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+        entry2.add_to_hass(hass)
+        await hass.config_entries.async_setup(entry2.entry_id)
+        await hass.async_block_till_done()
+
+        await hass.config_entries.async_unload(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+        await hass.config_entries.async_unload(entry2.entry_id)
+        await hass.async_block_till_done()
+
+    mock_listener.stop.assert_called_once()
