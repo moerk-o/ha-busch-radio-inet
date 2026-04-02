@@ -21,9 +21,10 @@ _LOGGER = logging.getLogger(__name__)
 class BuschRadioCoordinator:
     """Manages device state and notifies the media_player entity on changes."""
 
-    def __init__(self, hass: HomeAssistant, client) -> None:
+    def __init__(self, hass: HomeAssistant, client, host: str = "") -> None:
         self._hass = hass
         self._client = client
+        self._host = host
 
         # Device state – all None until the first response arrives
         self.power: bool | None = None
@@ -88,7 +89,7 @@ class BuschRadioCoordinator:
             return
         url = self._get_current_stream_url()
         if url and self._icy_fetcher is not None:
-            _LOGGER.debug("Radio already playing on startup – starting ICY fetch for %s", url)
+            _LOGGER.debug("[%s] Radio already playing on startup – starting ICY fetch for %s", self._host, url)
             self._icy_fetcher.start(url)
 
     def handle_packet(self, fields: dict) -> None:
@@ -98,7 +99,8 @@ class BuschRadioCoordinator:
         """
         if fields.get("RESPONSE") == "NACK":
             _LOGGER.debug(
-                "Received NACK for command '%s', ignoring",
+                "[%s] Received NACK for command '%s', ignoring",
+                self._host,
                 fields.get("_parameter", "?"),
             )
             return
@@ -137,7 +139,7 @@ class BuschRadioCoordinator:
                     self.volume = vol
                     changed = True
             except (ValueError, TypeError):
-                _LOGGER.warning("Invalid VOLUME_SET value: %s", fields["VOLUME_SET"])
+                _LOGGER.warning("[%s] Invalid VOLUME_SET value: %s", self._host, fields["VOLUME_SET"])
 
         # --- Playing mode: active ---
         if fields.get("PLAYING") == "STATION":
@@ -151,7 +153,7 @@ class BuschRadioCoordinator:
                     changed = True
                     self._schedule_artwork_lookup()  # Tier 2 trigger
             except (ValueError, TypeError):
-                _LOGGER.warning("Invalid station ID: %s", fields.get("ID"))
+                _LOGGER.warning("[%s] Invalid station ID: %s", self._host, fields.get("ID"))
 
         # --- Playing mode: stopped ---
         if fields.get("MODE") == "PLAYING STOPPED":
@@ -199,7 +201,7 @@ class BuschRadioCoordinator:
 
     def handle_notification(self, event: str) -> None:
         """React to a raw NOTIFICATION event forwarded by the UDP listener."""
-        _LOGGER.debug("Coordinator handling notification: %s", event)
+        _LOGGER.debug("[%s] Coordinator handling notification: %s", self._host, event)
         if event == "STATION_CHANGED":
             self._on_station_changed()
         elif event == "URL_IS_PLAYING":
@@ -307,7 +309,7 @@ class BuschRadioCoordinator:
 
     async def _async_poll(self, _now=None) -> None:
         """Periodic fallback poll – keeps state fresh if a notification was lost."""
-        _LOGGER.debug("Fallback poll: refreshing device state")
+        _LOGGER.debug("[%s] Fallback poll: refreshing device state", self._host)
         await self._client.send_get("POWER_STATUS")
         await self._client.send_get("VOLUME")
         await self._client.send_get("PLAYING_MODE")

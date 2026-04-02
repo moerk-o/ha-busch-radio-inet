@@ -69,7 +69,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         shared_listener: SharedUDPListener = domain_data[_SHARED_LISTENER_KEY]
 
     client = BuschRadioUDPClient(host, port)
-    coordinator = BuschRadioCoordinator(hass, client)
+    coordinator = BuschRadioCoordinator(hass, client, host)
 
     shared_listener.register(
         host,
