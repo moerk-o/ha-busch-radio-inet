@@ -1,3 +1,17 @@
+### ✨ New Features
+
+- **Device name suggestion** – When adding an additional device, the name field now pre-fills with "Busch-Radio iNet 2" (or 3, etc.) instead of repeating the same default.
+
+### 🐞 Bug Fixes
+
+- **Multi-device setup** – Fixed an issue where adding a second device through the setup dialog would fail with a connection error even if the device was reachable.
+
+**Full Changelog**: https://github.com/moerk-o/ha-busch-radio-inet/compare/v1.0.2...v1.0.3
+
+---
+
+# v1.0.2
+
 ### 🐞 Bug Fixes
 
 - **Multi-device support** – Fixed an issue where adding a second device failed with "port already in use". The integration now uses a shared UDP listener that routes packets by source IP, supporting any number of devices simultaneously.
