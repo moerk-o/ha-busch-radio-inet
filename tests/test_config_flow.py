@@ -10,9 +10,10 @@ from homeassistant.core import HomeAssistant
 from custom_components.busch_radio_inet.config_flow import (
     CannotConnect,
     _ValidationProtocol,
+    _suggested_name,
     validate_connection,
 )
-from custom_components.busch_radio_inet.const import DOMAIN
+from custom_components.busch_radio_inet.const import DEFAULT_NAME, DOMAIN
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +268,18 @@ async def test_config_flow_aborts_when_host_already_configured(
     assert result2["type"] == "abort"
     assert result2["reason"] == "already_configured"
     mock_validate.assert_not_called()
+
+
+def test_suggested_name_first_device():
+    assert _suggested_name(0) == DEFAULT_NAME
+
+
+def test_suggested_name_second_device():
+    assert _suggested_name(1) == f"{DEFAULT_NAME} 2"
+
+
+def test_suggested_name_third_device():
+    assert _suggested_name(2) == f"{DEFAULT_NAME} 3"
 
 
 async def test_config_flow_shows_form_on_first_step(hass: HomeAssistant):

@@ -46,6 +46,13 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 )
 
 
+def _suggested_name(existing_count: int) -> str:
+    """Return a non-conflicting default name based on how many devices exist."""
+    if existing_count == 0:
+        return DEFAULT_NAME
+    return f"{DEFAULT_NAME} {existing_count + 1}"
+
+
 class CannotConnect(Exception):
     """Raised when a connection attempt to the device fails."""
 
@@ -164,9 +171,19 @@ class BuschRadioINetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data=user_input,
                 )
 
+        existing_count = len(self.hass.config_entries.async_entries(DOMAIN))
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_HOST): str,
+                vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
+                vol.Required(
+                    CONF_NAME, default=_suggested_name(existing_count)
+                ): str,
+            }
+        )
         return self.async_show_form(
             step_id="user",
-            data_schema=STEP_USER_DATA_SCHEMA,
+            data_schema=schema,
             errors=errors,
         )
 
