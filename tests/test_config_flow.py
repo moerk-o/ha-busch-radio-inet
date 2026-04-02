@@ -120,6 +120,13 @@ async def test_protocol_connection_lost_does_not_overwrite_result():
 # ===========================================================================
 
 
+def _mock_hass_no_listener():
+    """Return a mock hass with no shared listener (first device scenario)."""
+    hass = MagicMock()
+    hass.data = {}
+    return hass
+
+
 async def test_validate_connection_raises_cannot_connect_on_oserror():
     """OSError when binding the socket → CannotConnect."""
     with patch(
@@ -133,7 +140,7 @@ async def test_validate_connection_raises_cannot_connect_on_oserror():
         mock_get_loop.return_value = mock_loop
 
         with pytest.raises(CannotConnect):
-            await validate_connection("192.168.1.179", 4244)
+            await validate_connection(_mock_hass_no_listener(), "192.168.1.179", 4244)
 
 
 async def test_validate_connection_no_transport_to_close_on_oserror():
@@ -150,7 +157,65 @@ async def test_validate_connection_no_transport_to_close_on_oserror():
 
         # Must not raise AttributeError or anything from the finally block
         with pytest.raises(CannotConnect):
-            await validate_connection("192.168.1.179", 4244)
+            await validate_connection(_mock_hass_no_listener(), "192.168.1.179", 4244)
+
+
+async def test_validate_connection_reuses_shared_listener():
+    """When a SharedUDPListener exists, validation registers on it instead of binding port 4242."""
+    mock_listener = MagicMock()
+    captured_callback = {}
+
+    def fake_register(host, on_packet, client, on_notification=None):
+        captured_callback["on_packet"] = on_packet
+
+    mock_listener.register = fake_register
+    mock_listener.unregister = MagicMock()
+
+    hass = MagicMock()
+    hass.data = {"busch_radio_inet": {"shared_listener": mock_listener}}
+
+    with patch(
+        "custom_components.busch_radio_inet.config_flow.BuschRadioUDPClient"
+    ) as mock_client_cls:
+        mock_client = MagicMock()
+
+        async def fake_send_get(cmd):
+            # Simulate device response arriving via the shared listener callback
+            captured_callback["on_packet"]({"SERNO": "AABBCC112233", "NAME": "RADIO"})
+
+        mock_client.send_get = fake_send_get
+        mock_client_cls.return_value = mock_client
+
+        result = await validate_connection(hass, "192.168.1.20", 4244)
+
+    assert result["SERNO"] == "AABBCC112233"
+    mock_listener.unregister.assert_called_once_with("192.168.1.20")
+
+
+async def test_validate_connection_shared_listener_timeout_raises_cannot_connect():
+    """Timeout via shared listener path → CannotConnect."""
+    mock_listener = MagicMock()
+    mock_listener.register = MagicMock()
+    mock_listener.unregister = MagicMock()
+
+    hass = MagicMock()
+    hass.data = {"busch_radio_inet": {"shared_listener": mock_listener}}
+
+    with patch(
+        "custom_components.busch_radio_inet.config_flow.BuschRadioUDPClient"
+    ) as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.send_get = AsyncMock()
+        mock_client_cls.return_value = mock_client
+
+        with patch(
+            "custom_components.busch_radio_inet.config_flow.asyncio.wait_for",
+            side_effect=asyncio.TimeoutError,
+        ):
+            with pytest.raises(CannotConnect):
+                await validate_connection(hass, "192.168.1.20", 4244)
+
+    mock_listener.unregister.assert_called_once_with("192.168.1.20")
 
 
 # ===========================================================================

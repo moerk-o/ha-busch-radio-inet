@@ -88,29 +88,48 @@ class _ValidationProtocol(asyncio.DatagramProtocol):
             self._future.set_exception(exc)
 
 
-async def validate_connection(host: str, port: int) -> dict:
+async def validate_connection(hass, host: str, port: int) -> dict:
     """Send GET INFO_BLOCK and wait for the response.
 
     Returns the parsed device info fields on success.
     Raises CannotConnect on timeout or socket error.
+
+    If a SharedUDPListener is already running (another device is configured),
+    it is reused for validation to avoid a second bind on port 4242.
     """
     loop = asyncio.get_running_loop()
     future: asyncio.Future = loop.create_future()
+    client = BuschRadioUDPClient(host, port)
 
-    transport = None
-    try:
-        transport, _ = await loop.create_datagram_endpoint(
-            lambda: _ValidationProtocol(future),
-            local_addr=("0.0.0.0", DEFAULT_LISTEN_PORT),
-        )
-        client = BuschRadioUDPClient(host, port)
-        await client.send_get("INFO_BLOCK")
-        return await asyncio.wait_for(future, timeout=CONNECT_TIMEOUT)
-    except (OSError, asyncio.TimeoutError) as exc:
-        raise CannotConnect from exc
-    finally:
-        if transport is not None:
-            transport.close()
+    shared_listener = hass.data.get(DOMAIN, {}).get("shared_listener")
+
+    if shared_listener is not None:
+        def on_packet(fields: dict) -> None:
+            if "SERNO" in fields and not future.done():
+                future.set_result(fields)
+
+        shared_listener.register(host, on_packet, client)
+        try:
+            await client.send_get("INFO_BLOCK")
+            return await asyncio.wait_for(future, timeout=CONNECT_TIMEOUT)
+        except asyncio.TimeoutError as exc:
+            raise CannotConnect from exc
+        finally:
+            shared_listener.unregister(host)
+    else:
+        transport = None
+        try:
+            transport, _ = await loop.create_datagram_endpoint(
+                lambda: _ValidationProtocol(future),
+                local_addr=("0.0.0.0", DEFAULT_LISTEN_PORT),
+            )
+            await client.send_get("INFO_BLOCK")
+            return await asyncio.wait_for(future, timeout=CONNECT_TIMEOUT)
+        except (OSError, asyncio.TimeoutError) as exc:
+            raise CannotConnect from exc
+        finally:
+            if transport is not None:
+                transport.close()
 
 
 class BuschRadioINetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -129,12 +148,10 @@ class BuschRadioINetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             port = user_input[CONF_PORT]
 
             # Abort early if a config entry with the same host already exists.
-            # This prevents validate_connection from failing with OSError when
-            # port 4242 is already bound by the running listener.
             self._async_abort_entries_match({CONF_HOST: host})
 
             try:
-                info = await validate_connection(host, port)
+                info = await validate_connection(self.hass, host, port)
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             else:
