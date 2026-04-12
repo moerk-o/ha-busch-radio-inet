@@ -138,12 +138,16 @@ class ArtworkClient:
                     return None
                 data = await response.json(content_type=None)
             results = data.get("results", [])
+            _LOGGER.debug("iTunes: %d result(s) for artist='%s' title='%s'", len(results), artist, title)
             artist_lower = artist.lower()
             for item in results:
-                if artist_lower not in item.get("artistName", "").lower():
+                item_artist = item.get("artistName", "")
+                if artist_lower not in item_artist.lower():
+                    _LOGGER.debug("iTunes: skipping artistName='%s' (no match for '%s')", item_artist, artist)
                     continue
                 artwork = item.get("artworkUrl100", "")
                 if artwork:
+                    _LOGGER.debug("iTunes: matched artistName='%s'", item_artist)
                     # Replace 100x100 thumbnail with 600x600 version
                     return artwork.replace("100x100bb", "600x600bb")
         except asyncio.CancelledError:
@@ -175,7 +179,13 @@ class ArtworkClient:
             recordings = data.get("recordings", [])
             if not recordings:
                 return None
-            if recordings[0].get("score", 0) < 85:
+            score = recordings[0].get("score", 0)
+            _LOGGER.debug(
+                "MusicBrainz: score=%s for '%s – %s' → %s",
+                score, artist, title,
+                "accepted" if score >= 85 else "rejected (below threshold 85)",
+            )
+            if score < 85:
                 return None
             releases = recordings[0].get("releases", [])
             if not releases:
@@ -183,6 +193,10 @@ class ArtworkClient:
             release_id = _best_release_id(releases)
             if not release_id:
                 return None
+            _LOGGER.debug(
+                "MusicBrainz: %d release(s) found, selected %s",
+                len(releases), release_id,
+            )
 
             # Step 2: Cover Art Archive – follow redirect to get the image URL
             caa_url = f"https://coverartarchive.org/release/{release_id}/front"
