@@ -1,3 +1,17 @@
+### 🐞 Bug Fixes
+
+- **Artwork-Suche** – Verbesserte Verifizierung von Cover-Ergebnissen: iTunes prüft jetzt den Künstlernamen, MusicBrainz verwirft unsichere Treffer und bevorzugt offizielle Album-Releases.
+
+### 🔧 Verbesserungen
+
+- **Debug-Logging** – Die Artwork-Suche gibt auf Log-Level `DEBUG` jetzt detaillierte Informationen aus. Hilfreich zur Diagnose bei unerwartetem Verhalten.
+
+**Full Changelog**: https://github.com/moerk-o/ha-busch-radio-inet/compare/v1.0.3...v1.0.4
+
+---
+
+# v1.0.3
+
 ### ✨ New Features
 
 - **Device name suggestion** – When adding an additional device, the name field now pre-fills with "Busch-Radio iNet 2" (or 3, etc.) instead of repeating the same default.
