@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import custom_components.busch_radio_inet.artwork_client as artwork_module
-from custom_components.busch_radio_inet.artwork_client import ArtworkClient
+from custom_components.busch_radio_inet.artwork_client import ArtworkClient, _best_release_id
 
 
 def make_client():
@@ -43,7 +43,7 @@ def _mock_session(*responses):
 async def test_fetch_music_artwork_itunes_hit():
     client, _ = make_client()
     itunes_data = {
-        "results": [{"artworkUrl100": "https://example.com/100x100bb.jpg"}]
+        "results": [{"artistName": "Artist", "artworkUrl100": "https://example.com/100x100bb.jpg"}]
     }
     session = _mock_session(_make_response(200, itunes_data))
     with patch(
@@ -58,7 +58,7 @@ async def test_fetch_music_artwork_itunes_hit():
 async def test_fetch_music_artwork_itunes_replaces_thumbnail_size():
     client, _ = make_client()
     itunes_data = {
-        "results": [{"artworkUrl100": "https://mzstatic.com/image/100x100bb/cover.jpg"}]
+        "results": [{"artistName": "A", "artworkUrl100": "https://mzstatic.com/image/100x100bb/cover.jpg"}]
     }
     session = _mock_session(_make_response(200, itunes_data))
     with patch(
@@ -173,6 +173,7 @@ async def test_fetch_music_artwork_musicbrainz_caa_hit():
     client, _ = make_client()
     mb_data = {
         "recordings": [{
+            "score": 100,
             "releases": [{"id": "release-uuid-123"}]
         }]
     }
@@ -372,6 +373,171 @@ async def test_mb_throttled_get_enforces_wait():
 
     assert len(sleep_called_with) == 1
     assert sleep_called_with[0] > 0
+
+
+# ===========================================================================
+# _fetch_itunes – artist match filter
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_itunes_skips_result_when_artist_does_not_match():
+    """First result has wrong artist → skipped; second result matches → returned."""
+    client, _ = make_client()
+    itunes_data = {
+        "results": [
+            {"artistName": "Nils Frahm", "artworkUrl100": "https://wrong.com/100x100bb.jpg"},
+            {"artistName": "George Ezra", "artworkUrl100": "https://correct.com/100x100bb.jpg"},
+        ]
+    }
+    session = _mock_session(_make_response(200, itunes_data))
+    with patch(
+        "custom_components.busch_radio_inet.artwork_client.async_get_clientsession",
+        return_value=session,
+    ):
+        result = await client.fetch_music_artwork("George Ezra", "Shotgun")
+    assert result == "https://correct.com/600x600bb.jpg"
+
+
+@pytest.mark.asyncio
+async def test_itunes_returns_none_when_no_artist_matches():
+    """All results have a different artist → falls through to MusicBrainz → None."""
+    client, _ = make_client()
+    itunes_data = {
+        "results": [
+            {"artistName": "Nils Frahm", "artworkUrl100": "https://wrong.com/100x100bb.jpg"},
+            {"artistName": "Erased Tapes", "artworkUrl100": "https://wrong2.com/100x100bb.jpg"},
+        ]
+    }
+    mb_data = {"recordings": []}
+    session = _mock_session(_make_response(200, itunes_data), _make_response(200, mb_data))
+    with patch(
+        "custom_components.busch_radio_inet.artwork_client.async_get_clientsession",
+        return_value=session,
+    ), patch(
+        "custom_components.busch_radio_inet.artwork_client.asyncio.sleep",
+        new_callable=AsyncMock,
+    ):
+        result = await client.fetch_music_artwork("George Ezra", "Shotgun")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_itunes_artist_match_is_case_insensitive():
+    """Artist match must be case-insensitive."""
+    client, _ = make_client()
+    itunes_data = {
+        "results": [{"artistName": "ADELE", "artworkUrl100": "https://adele.com/100x100bb.jpg"}]
+    }
+    session = _mock_session(_make_response(200, itunes_data))
+    with patch(
+        "custom_components.busch_radio_inet.artwork_client.async_get_clientsession",
+        return_value=session,
+    ):
+        result = await client.fetch_music_artwork("Adele", "Hello")
+    assert result == "https://adele.com/600x600bb.jpg"
+
+
+# ===========================================================================
+# _fetch_musicbrainz – score threshold
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_musicbrainz_low_score_returns_none():
+    """Recording with score < 85 must be rejected."""
+    client, _ = make_client()
+    mb_data = {
+        "recordings": [{
+            "score": 60,
+            "releases": [{"id": "some-release"}]
+        }]
+    }
+    with patch.object(client, "_fetch_itunes", new=AsyncMock(return_value=None)), \
+         patch.object(client, "_mb_throttled_get", new=AsyncMock(
+             return_value=_make_response(200, mb_data)
+         )), \
+         patch(
+             "custom_components.busch_radio_inet.artwork_client.async_get_clientsession",
+             return_value=MagicMock(),
+         ):
+        result = await client.fetch_music_artwork("Artist", "Song")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_musicbrainz_score_exactly_85_is_accepted():
+    """Score of exactly 85 must be accepted (boundary)."""
+    client, _ = make_client()
+    mb_data = {
+        "recordings": [{
+            "score": 85,
+            "releases": [{"id": "release-uuid-85"}]
+        }]
+    }
+    caa_resp = MagicMock()
+    caa_resp.status = 307
+    caa_resp.headers = {"Location": "https://archive.org/cover85.jpg"}
+
+    session = MagicMock()
+    session.get = MagicMock(return_value=AsyncMock(
+        __aenter__=AsyncMock(return_value=caa_resp),
+        __aexit__=AsyncMock(return_value=False),
+    ))
+
+    with patch.object(client, "_fetch_itunes", new=AsyncMock(return_value=None)), \
+         patch.object(client, "_mb_throttled_get", new=AsyncMock(
+             return_value=_make_response(200, mb_data)
+         )), \
+         patch(
+             "custom_components.busch_radio_inet.artwork_client.async_get_clientsession",
+             return_value=session,
+         ):
+        result = await client.fetch_music_artwork("Artist", "Song")
+    assert result == "https://archive.org/cover85.jpg"
+
+
+# ===========================================================================
+# _best_release_id – release selection
+# ===========================================================================
+
+
+def test_best_release_id_prefers_official_album():
+    releases = [
+        {"id": "comp-id", "status": "Official", "release-group": {"primary-type": "Compilation"}},
+        {"id": "album-id", "status": "Official", "release-group": {"primary-type": "Album"}},
+    ]
+    assert _best_release_id(releases) == "album-id"
+
+
+def test_best_release_id_falls_back_to_official_non_album():
+    releases = [
+        {"id": "single-id", "status": "Official", "release-group": {"primary-type": "Single"}},
+        {"id": "promo-id", "status": "Promotion", "release-group": {"primary-type": "Album"}},
+    ]
+    assert _best_release_id(releases) == "single-id"
+
+
+def test_best_release_id_falls_back_to_first_when_nothing_official():
+    releases = [
+        {"id": "first-id", "status": "Bootleg", "release-group": {"primary-type": "Album"}},
+        {"id": "second-id", "status": "Bootleg", "release-group": {"primary-type": "Album"}},
+    ]
+    assert _best_release_id(releases) == "first-id"
+
+
+def test_best_release_id_returns_none_when_releases_empty():
+    assert _best_release_id([{}]) is None
+
+
+def test_best_release_id_handles_missing_release_group():
+    releases = [{"id": "bare-id", "status": "Official"}]
+    assert _best_release_id(releases) == "bare-id"
+
+
+# ===========================================================================
+# _mb_throttled_get – rate limiting
+# ===========================================================================
 
 
 @pytest.mark.asyncio
