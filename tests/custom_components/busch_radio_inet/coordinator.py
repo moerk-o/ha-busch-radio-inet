@@ -283,8 +283,22 @@ class BuschRadioCoordinator:
             # Tier 1: music artwork when "Artist - Title" format is present
             if title and " - " in title:
                 artist, _, song = title.partition(" - ")
+                _LOGGER.debug(
+                    "[%s] Artwork Tier 1: looking up '%s' by '%s'",
+                    self._host, song.strip(), artist.strip(),
+                )
                 url = await self._artwork_client.fetch_music_artwork(
                     artist.strip(), song.strip()
+                )
+                if url is None:
+                    _LOGGER.debug(
+                        "[%s] Artwork Tier 1: no result, falling back to station logo",
+                        self._host,
+                    )
+            else:
+                _LOGGER.debug(
+                    "[%s] Artwork: no 'Artist - Title' split in '%s', using station logo",
+                    self._host, title,
                 )
 
             # Tier 2: station logo as final fallback
