@@ -34,6 +34,28 @@ _MB_MIN_INTERVAL: float = 1.5  # seconds between MB requests (limit is 1/s, we u
 _REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=8)
 
 
+def _best_release_id(releases: list) -> str | None:
+    """Return the most suitable release ID from a MusicBrainz releases list.
+
+    Preference: Official Album > any Official release > first release.
+    """
+    official_album: str | None = None
+    official_any: str | None = None
+
+    for release in releases:
+        rid = release.get("id")
+        if not rid:
+            continue
+        is_official = release.get("status", "") == "Official"
+        primary_type = release.get("release-group", {}).get("primary-type", "")
+        if is_official and primary_type == "Album" and official_album is None:
+            official_album = rid
+        elif is_official and official_any is None:
+            official_any = rid
+
+    return official_album or official_any or releases[0].get("id")
+
+
 class ArtworkClient:
     """Fetches album artwork and station logos from public, key-free APIs."""
 
@@ -116,7 +138,10 @@ class ArtworkClient:
                     return None
                 data = await response.json(content_type=None)
             results = data.get("results", [])
+            artist_lower = artist.lower()
             for item in results:
+                if artist_lower not in item.get("artistName", "").lower():
+                    continue
                 artwork = item.get("artworkUrl100", "")
                 if artwork:
                     # Replace 100x100 thumbnail with 600x600 version
@@ -150,10 +175,12 @@ class ArtworkClient:
             recordings = data.get("recordings", [])
             if not recordings:
                 return None
+            if recordings[0].get("score", 0) < 85:
+                return None
             releases = recordings[0].get("releases", [])
             if not releases:
                 return None
-            release_id = releases[0].get("id")
+            release_id = _best_release_id(releases)
             if not release_id:
                 return None
 
