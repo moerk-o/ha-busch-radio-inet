@@ -1,10 +1,28 @@
+### 🔮 What's up with all these releases?
+
+They are a direct follow-up to [issue #1](https://github.com/moerk-o/ha-busch-radio-inet/issues/1). Since this integration currently has a very small user base, I've decided to iterate releases directly rather than going through a longer testing cycle – fixes go out as soon as they're ready, and so do some verifying improvements for #1. Thanks for your patience!
+
 ### 🐞 Bug Fixes
 
-- **Artwork-Suche** – Verbesserte Verifizierung von Cover-Ergebnissen: iTunes prüft jetzt den Künstlernamen, MusicBrainz verwirft unsichere Treffer und bevorzugt offizielle Album-Releases.
+- **Cover stuck after song change** – The cover image was only updated when a new title arrived from the stream. If the stream sent an empty title between songs, the previous cover remained visible indefinitely. This is now fixed.
 
-### 🔧 Verbesserungen
+### 🔧 Improvements
 
-- **Debug-Logging** – Die Artwork-Suche gibt auf Log-Level `DEBUG` jetzt detaillierte Informationen aus. Hilfreich zur Diagnose bei unerwartetem Verhalten.
+- **Extended debug logging** – ICY stream connections, title changes, artwork URL updates, and all lookup steps are now fully logged at `DEBUG` level.
+
+**Full Changelog**: https://github.com/moerk-o/ha-busch-radio-inet/compare/v1.0.4...v1.0.5
+
+---
+
+# v1.0.4
+
+### 🐞 Bug Fixes
+
+- **Artwork lookup** – Improved verification of cover results: iTunes now validates the artist name, MusicBrainz rejects low-confidence matches and prefers official album releases over compilations.
+
+### 🔧 Improvements
+
+- **Debug logging** – The artwork lookup now outputs detailed information at `DEBUG` log level. Useful for diagnosing unexpected behavior.
 
 **Full Changelog**: https://github.com/moerk-o/ha-busch-radio-inet/compare/v1.0.3...v1.0.4
 
