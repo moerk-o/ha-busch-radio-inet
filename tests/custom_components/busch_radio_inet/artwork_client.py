@@ -77,6 +77,7 @@ class ArtworkClient:
         """
         cache_key = f"{artist}|{title}"
         if cache_key in self._music_cache:
+            _LOGGER.debug("Music artwork cache hit for '%s – %s': %s", artist, title, self._music_cache[cache_key] or "not found")
             return self._music_cache[cache_key]
 
         url = await self._fetch_itunes(artist, title)
@@ -105,6 +106,7 @@ class ArtworkClient:
         if not cache_key:
             return None
         if cache_key in self._logo_cache:
+            _LOGGER.debug("Station logo cache hit for '%s': %s", station_name or stream_url, self._logo_cache[cache_key] or "not found")
             return self._logo_cache[cache_key]
 
         url: str | None = None
@@ -209,7 +211,11 @@ class ArtworkClient:
                 if caa_response.status in (301, 302, 307, 308):
                     location = caa_response.headers.get("Location")
                     if location:
+                        _LOGGER.debug("MusicBrainz/CAA: redirect → %s", location)
                         return location
+                    _LOGGER.debug("MusicBrainz/CAA: redirect status %d but no Location header for release %s", caa_response.status, release_id)
+                else:
+                    _LOGGER.debug("MusicBrainz/CAA: no artwork for release %s (status %d)", release_id, caa_response.status)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -255,7 +261,9 @@ class ArtworkClient:
             for station in stations:
                 favicon = station.get("favicon", "").strip()
                 if favicon:
+                    _LOGGER.debug("radio-browser URL lookup: found favicon for %s", stream_url)
                     return favicon
+            _LOGGER.debug("radio-browser URL lookup: no favicon found for %s", stream_url)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -282,7 +290,9 @@ class ArtworkClient:
             for station in stations:
                 favicon = station.get("favicon", "").strip()
                 if favicon:
+                    _LOGGER.debug("radio-browser name lookup: found favicon for '%s'", station_name)
                     return favicon
+            _LOGGER.debug("radio-browser name lookup: no favicon found for '%s'", station_name)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

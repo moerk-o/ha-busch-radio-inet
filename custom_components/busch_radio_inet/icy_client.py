@@ -73,6 +73,7 @@ class IcyClient:
         on any connection/timeout error.
         """
         try:
+            _LOGGER.debug("ICY interval: connecting to %s", url)
             timeout = aiohttp.ClientTimeout(total=_ICY_CONNECT_TIMEOUT)
             session = async_get_clientsession(self._hass)
             async with session.get(
@@ -87,7 +88,9 @@ class IcyClient:
                         )
                         return None
                     metaint = int(metaint_str)
-                    return await self._read_first_block(response.content, metaint)
+                    title = await self._read_first_block(response.content, metaint)
+                    _LOGGER.debug("ICY interval: received title='%s' from %s", title, url)
+                    return title
         except asyncio.TimeoutError:
             _LOGGER.warning("ICY fetch timed out for %s", url)
             return None
@@ -136,6 +139,7 @@ class IcyIntervalScheduler:
         """Cancel any running cycle, start an immediate fetch, then repeat."""
         self.stop()
         self._url = url
+        _LOGGER.debug("ICY interval: starting for %s (interval=%ds)", url, self._interval)
         self._fetch_task = self._hass.loop.create_task(self._do_fetch())
         self._cancel_timer = async_track_time_interval(
             self._hass,
@@ -163,6 +167,7 @@ class IcyIntervalScheduler:
         if not self._url:
             return
         title = await self._fetcher.fetch_title(self._url)
+        _LOGGER.debug("ICY interval: passing title='%s' to coordinator", title)
         self._on_title(title)
 
 
@@ -190,6 +195,7 @@ class IcyPersistentConnection:
         """Cancel any running connection and open a new one to the given URL."""
         self.stop()
         self._current_title = None
+        _LOGGER.debug("ICY persistent: starting for %s", url)
         self._task = self._hass.loop.create_task(self._run(url))
 
     def stop(self) -> None:
@@ -216,6 +222,7 @@ class IcyPersistentConnection:
                         self._on_title(None)
                         return
                     metaint = int(metaint_str)
+                    _LOGGER.debug("ICY persistent: connected to %s (metaint=%d)", url, metaint)
                     await self._read_loop(response.content, metaint)
         except asyncio.CancelledError:
             pass  # Normal path: stop() was called
@@ -237,5 +244,9 @@ class IcyPersistentConnection:
                 meta_text = meta_bytes.decode("utf-8", errors="replace")
                 title = _parse_stream_title(meta_text)
                 if title != self._current_title:
+                    _LOGGER.debug(
+                        "ICY persistent: StreamTitle changed '%s' → '%s'",
+                        self._current_title, title,
+                    )
                     self._current_title = title
                     self._on_title(title)
