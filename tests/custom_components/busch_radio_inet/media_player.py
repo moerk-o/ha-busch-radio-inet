@@ -148,10 +148,14 @@ class BuschRadioMediaPlayer(MediaPlayerEntity):
 
     @property
     def media_artist(self) -> str | None:
-        """Artist parsed from ICY StreamTitle when format is 'Artist - Title'."""
+        """Artist parsed from ICY StreamTitle ('Artist - Title' or 'Title / Artist' format)."""
         title = self._coordinator.media_title
-        if title and " - " in title:
+        has_dash = bool(title and " - " in title)
+        has_slash = bool(title and " / " in title)
+        if has_dash and not has_slash:
             return title.split(" - ", 1)[0]
+        if has_slash and not has_dash:
+            return title.split(" / ", 1)[1]
         return None
 
     @property

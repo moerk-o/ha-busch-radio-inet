@@ -288,16 +288,26 @@ class BuschRadioCoordinator:
             url: str | None = None
             title = self.media_title
 
-            # Tier 1: music artwork when "Artist - Title" format is present
-            if title and " - " in title:
+            # Tier 1: music artwork when exactly one known separator is present
+            # Supported: "Artist - Title"  or  "Title / Artist" (not both)
+            has_dash = bool(title and " - " in title)
+            has_slash = bool(title and " / " in title)
+
+            if has_dash and not has_slash:
                 artist, _, song = title.partition(" - ")
+                artist, song = artist.strip(), song.strip()
+            elif has_slash and not has_dash:
+                raw_song, _, raw_artist = title.partition(" / ")
+                song, artist = raw_song.strip(), raw_artist.strip()
+            else:
+                artist = song = None
+
+            if artist and song:
                 _LOGGER.debug(
                     "[%s] Artwork Tier 1: looking up '%s' by '%s'",
-                    self._host, song.strip(), artist.strip(),
+                    self._host, song, artist,
                 )
-                url = await self._artwork_client.fetch_music_artwork(
-                    artist.strip(), song.strip()
-                )
+                url = await self._artwork_client.fetch_music_artwork(artist, song)
                 if url is None:
                     _LOGGER.debug(
                         "[%s] Artwork Tier 1: no result, falling back to station logo",
@@ -305,7 +315,7 @@ class BuschRadioCoordinator:
                     )
             else:
                 _LOGGER.debug(
-                    "[%s] Artwork: no 'Artist - Title' split in '%s', using station logo",
+                    "[%s] Artwork: no unambiguous separator in '%s', using station logo",
                     self._host, title,
                 )
 
