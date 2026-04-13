@@ -1,3 +1,13 @@
+### 🐞 Bug Fixes
+
+- **Improved artist/title separation** – The integration now accepts more stream formats. Previously only `Artist - Title` was recognised; `Title / Artist` is now supported as well.
+
+**Full Changelog**: https://github.com/moerk-o/ha-busch-radio-inet/compare/v1.0.5...v1.0.6
+
+---
+
+# v1.0.5
+
 ### 🔮 What's up with all these releases?
 
 They are a direct follow-up to [issue #1](https://github.com/moerk-o/ha-busch-radio-inet/issues/1). Since this integration currently has a very small user base, I've decided to iterate releases directly rather than going through a longer testing cycle – fixes go out as soon as they're ready, and so do some verifying improvements for #1. Thanks for your patience!
