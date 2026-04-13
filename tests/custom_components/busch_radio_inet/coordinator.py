@@ -190,8 +190,7 @@ class BuschRadioCoordinator:
         if self.media_title != title:
             self.media_title = title
             self._notify_callbacks()
-            if title and " - " in title:  # Tier 1 trigger
-                self._schedule_artwork_lookup()
+            self._schedule_artwork_lookup()  # Tier 1 if "Artist - Title", else Tier 2 logo
 
     def set_media_image(self, url: str | None) -> None:
         """Update artwork URL and notify callbacks if changed."""
