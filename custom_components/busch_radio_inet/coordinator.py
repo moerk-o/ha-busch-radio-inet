@@ -188,6 +188,7 @@ class BuschRadioCoordinator:
     def set_media_title(self, title: str | None) -> None:
         """Update media title from ICY metadata."""
         if self.media_title != title:
+            _LOGGER.debug("[%s] Title update: '%s' → '%s'", self._host, self.media_title, title)
             self.media_title = title
             self._notify_callbacks()
             self._schedule_artwork_lookup()  # Tier 1 if "Artist - Title", else Tier 2 logo
@@ -195,6 +196,7 @@ class BuschRadioCoordinator:
     def set_media_image(self, url: str | None) -> None:
         """Update artwork URL and notify callbacks if changed."""
         if self.media_image_url != url:
+            _LOGGER.debug("[%s] Artwork URL: %s", self._host, url or "cleared")
             self.media_image_url = url
             self._notify_callbacks()
 
@@ -229,6 +231,7 @@ class BuschRadioCoordinator:
 
     def _on_station_changed(self) -> None:
         """Station is changing – stop ICY fetch, cancel artwork, clear stale title."""
+        _LOGGER.debug("[%s] Station changed: stopping ICY, clearing title + artwork", self._host)
         if self._icy_fetcher is not None:
             self._icy_fetcher.stop()
         self.stop_artwork()
@@ -239,10 +242,12 @@ class BuschRadioCoordinator:
         """Stream is stable – start ICY fetch for the current station."""
         url = self._get_current_stream_url()
         if url and self._icy_fetcher is not None:
+            _LOGGER.debug("[%s] URL is playing: starting ICY fetch for %s", self._host, url)
             self._icy_fetcher.start(url)
 
     def _on_power_off(self) -> None:
         """Device switched off – stop ICY fetch, cancel artwork, clear title."""
+        _LOGGER.debug("[%s] Power off: stopping ICY, clearing state", self._host)
         if self._icy_fetcher is not None:
             self._icy_fetcher.stop()
         self.stop_artwork()
@@ -269,6 +274,10 @@ class BuschRadioCoordinator:
         if self._artwork_task is not None:
             self._artwork_task.cancel()
         self._artwork_generation += 1
+        _LOGGER.debug(
+            "[%s] Artwork lookup scheduled (gen=%d, title='%s')",
+            self._host, self._artwork_generation, self.media_title,
+        )
         self._artwork_task = self._hass.async_create_task(
             self._async_artwork_lookup(self._artwork_generation)
         )
