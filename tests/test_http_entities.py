@@ -574,3 +574,60 @@ class TestMainsVoltageSensor:
     def test_disabled_by_default(self):
         entity, _ = self._make()
         assert entity.entity_registry_enabled_default is False
+
+
+class TestBuschRadioStationPresetsSensor:
+    def _make(self, station_list):
+        from custom_components.busch_radio_inet.sensor import BuschRadioStationPresetsSensor
+        coord = MagicMock()
+        coord.station_list = station_list
+        coord.available = True
+        coord.register_callback = MagicMock()
+        coord.unregister_callback = MagicMock()
+        entry = make_entry()
+        entity = BuschRadioStationPresetsSensor(coord, entry)
+        entity.async_write_ha_state = MagicMock()
+        return entity, coord
+
+    def test_native_value_counts_occupied_presets(self):
+        entity, _ = self._make([
+            {"id": 1, "name": "WDR 2", "url": "u1"},
+            {"id": 2, "name": "NDR 90.3", "url": "u2"},
+        ])
+        assert entity.native_value == 2
+
+    def test_attributes_cover_all_eight_slots(self):
+        entity, _ = self._make([
+            {"id": 1, "name": "WDR 2", "url": "u1"},
+            {"id": 4, "name": "Relax", "url": "u4"},
+        ])
+        attrs = entity.extra_state_attributes
+        assert attrs["1_name"] == "WDR 2"
+        assert attrs["1_url"] == "u1"
+        assert attrs["4_name"] == "Relax"
+        # empty slots are present with empty strings
+        assert attrs["2_name"] == ""
+        assert attrs["8_url"] == ""
+        assert sum(1 for k in attrs if k.endswith("_name")) == 8
+        assert sum(1 for k in attrs if k.endswith("_url")) == 8
+
+    def test_unique_id(self):
+        entity, _ = self._make([])
+        assert entity.unique_id == f"{UNIQUE_ID}_station_presets"
+
+    def test_available_follows_coordinator(self):
+        entity, coord = self._make([])
+        coord.available = False
+        assert entity.available is False
+
+    @pytest.mark.asyncio
+    async def test_added_registers_callback(self):
+        entity, coord = self._make([])
+        await entity.async_added_to_hass()
+        coord.register_callback.assert_called_once_with(entity.async_write_ha_state)
+
+    @pytest.mark.asyncio
+    async def test_will_remove_unregisters_callback(self):
+        entity, coord = self._make([])
+        await entity.async_will_remove_from_hass()
+        coord.unregister_callback.assert_called_once_with(entity.async_write_ha_state)

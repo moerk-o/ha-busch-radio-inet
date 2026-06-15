@@ -130,6 +130,28 @@ the actual streaming is handled by Home Assistant's DLNA support.
 
 ---
 
+### Station Presets (`sensor.{name}_station_presets`)
+
+A read-only sensor that exposes the radio's 8 station preset slots, handy for
+building a custom dashboard card.
+
+- **State:** number of occupied presets (e.g. `6`)
+- **Attributes:** `1_name` / `1_url` … `8_name` / `8_url` — one pair per slot;
+  empty slots have empty strings.
+
+Example (Markdown card):
+
+```jinja
+{% for slot in range(1, 9) %}
+{% set name = state_attr('sensor.busch_radio_inet_station_presets', slot ~ '_name') %}
+{% if name %}- **{{ slot }}**: {{ name }}{% endif %}
+{% endfor %}
+```
+
+Writing/editing presets is not supported.
+
+---
+
 ### Device Settings Entities (optional)
 
 Enabled when **Expose device settings as HA entities** is turned on in the options. All settings
