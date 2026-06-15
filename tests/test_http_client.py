@@ -291,3 +291,53 @@ async def test_async_post_general_url_uses_host():
         await client.async_post_general({"bb": "100"})
 
     assert posted_url[0] == "http://10.0.0.5/en/general.cgi"
+
+
+# ===========================================================================
+# HttpSettingsClient.async_is_reachable
+# ===========================================================================
+
+
+def _session_get(status=None, exc=None):
+    """Build a mock session whose get() yields a response with `status`, or raises."""
+    session = MagicMock()
+    if exc is not None:
+        session.get = MagicMock(side_effect=exc)
+        return session
+    resp = AsyncMock()
+    resp.status = status
+    session.get = MagicMock(return_value=AsyncMock(
+        __aenter__=AsyncMock(return_value=resp),
+        __aexit__=AsyncMock(return_value=False),
+    ))
+    return session
+
+
+@pytest.mark.asyncio
+async def test_is_reachable_true_on_200():
+    client, _ = _make_client()
+    with patch(
+        "custom_components.busch_radio_inet.http_client.async_get_clientsession",
+        return_value=_session_get(status=200),
+    ):
+        assert await client.async_is_reachable() is True
+
+
+@pytest.mark.asyncio
+async def test_is_reachable_false_on_non_200():
+    client, _ = _make_client()
+    with patch(
+        "custom_components.busch_radio_inet.http_client.async_get_clientsession",
+        return_value=_session_get(status=500),
+    ):
+        assert await client.async_is_reachable() is False
+
+
+@pytest.mark.asyncio
+async def test_is_reachable_false_on_exception():
+    client, _ = _make_client()
+    with patch(
+        "custom_components.busch_radio_inet.http_client.async_get_clientsession",
+        return_value=_session_get(exc=OSError("connection refused")),
+    ):
+        assert await client.async_is_reachable() is False

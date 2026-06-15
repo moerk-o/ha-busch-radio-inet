@@ -183,8 +183,10 @@ are fetched from the radio over the local network and written back when changed.
 
 ### Entity shows `unavailable`
 
-The integration becomes unavailable if the radio does not respond at startup. Reload the
-integration after fixing network connectivity.
+The integration marks the device **unavailable** when it stops responding — powered off at
+the socket, network outage, or a device crash. Reachability is re-checked at least every
+5 minutes, and the device **recovers automatically** once it is back online (no reload
+needed). At startup the entities stay `unavailable` until the radio first responds.
 
 ### Song/artist info not updating
 

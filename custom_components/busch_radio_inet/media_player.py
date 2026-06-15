@@ -106,8 +106,8 @@ class BuschRadioMediaPlayer(MediaPlayerEntity):
 
     @property
     def available(self) -> bool:
-        """Entity is available once we have received power and volume state."""
-        return self._coordinator.is_ready
+        """Available once initialised and while the device stays reachable."""
+        return self._coordinator.available
 
     # ------------------------------------------------------------------
     # State

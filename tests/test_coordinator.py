@@ -641,3 +641,117 @@ async def test_artwork_lookup_logo_without_station_id():
     await coord._async_artwork_lookup(1)
     client.fetch_station_logo.assert_awaited_once_with(None, "NDR")
     assert coord.media_image_url is None
+
+
+# ===========================================================================
+# Availability / reachability
+# ===========================================================================
+
+
+def test_available_false_before_ready():
+    coord, _, _ = make_coordinator()
+    assert coord.available is False  # not ready yet
+
+
+def test_available_true_when_ready_and_reachable():
+    coord, _, _ = make_coordinator()
+    coord.power = True
+    coord.volume = 5
+    assert coord.available is True
+
+
+def test_available_false_when_unreachable():
+    coord, _, _ = make_coordinator()
+    coord.power = True
+    coord.volume = 5
+    coord._reachable = False
+    assert coord.available is False
+
+
+def test_set_unavailable_stops_icy_and_clears_now_playing():
+    coord, _, _ = make_coordinator()
+    fetcher = MagicMock()
+    coord.set_icy_fetcher(fetcher)
+    coord.media_title = "Artist - Song"
+    coord.media_image_url = "http://img"
+    cb = MagicMock()
+    coord.register_callback(cb)
+    coord._set_unavailable()
+    assert coord._reachable is False
+    fetcher.stop.assert_called_once()
+    assert coord.media_title is None
+    assert coord.media_image_url is None
+    cb.assert_called_once()
+
+
+def test_set_unavailable_when_already_unavailable_noop():
+    coord, _, _ = make_coordinator()
+    coord._reachable = False
+    cb = MagicMock()
+    coord.register_callback(cb)
+    coord._set_unavailable()
+    cb.assert_not_called()
+
+
+def test_mark_reachable_recovers_and_notifies():
+    coord, _, _ = make_coordinator()
+    coord._reachable = False
+    cb = MagicMock()
+    coord.register_callback(cb)
+    coord._mark_reachable()
+    assert coord._reachable is True
+    cb.assert_called_once()
+
+
+def test_mark_reachable_when_already_reachable_noop():
+    coord, _, _ = make_coordinator()
+    cb = MagicMock()
+    coord.register_callback(cb)
+    coord._mark_reachable()  # already reachable
+    cb.assert_not_called()
+
+
+def test_mark_reachable_restarts_icy_when_playing():
+    coord, _, _ = make_coordinator()
+    coord._reachable = False
+    coord.power = True
+    coord.station_id = 2
+    coord.station_list = [{"id": 2, "name": "NDR", "url": "http://ndr.example"}]
+    fetcher = MagicMock()
+    coord.set_icy_fetcher(fetcher)
+    coord._mark_reachable()
+    fetcher.start.assert_called_once_with("http://ndr.example")
+
+
+def test_handle_packet_recovers_reachability():
+    coord, _, _ = make_coordinator()
+    coord._reachable = False
+    cb = MagicMock()
+    coord.register_callback(cb)
+    coord.handle_packet({"POWER": "ON"})
+    assert coord._reachable is True
+    cb.assert_called()
+
+
+async def test_poll_marks_unavailable_when_unreachable():
+    coord, _, client = make_coordinator()
+    rc = MagicMock()
+    rc.async_is_reachable = AsyncMock(return_value=False)
+    coord.set_reachability_client(rc)
+    coord.power = True
+    coord.volume = 5
+    fetcher = MagicMock()
+    coord.set_icy_fetcher(fetcher)
+    await coord._async_poll()
+    assert coord.available is False
+    fetcher.stop.assert_called_once()
+    client.send_get.assert_not_called()  # did not proceed to UDP queries
+
+
+async def test_poll_reachable_sends_gets():
+    coord, _, client = make_coordinator()
+    rc = MagicMock()
+    rc.async_is_reachable = AsyncMock(return_value=True)
+    coord.set_reachability_client(rc)
+    await coord._async_poll()
+    assert client.send_get.call_count == 3
