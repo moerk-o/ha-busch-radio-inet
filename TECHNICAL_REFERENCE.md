@@ -1,6 +1,6 @@
 # Technical Reference: Home Assistant Integration `busch_radio_inet`
 
-**Version:** 1.2.1
+**Version:** 1.4.0
 **Date:** June 2026
 **Target Platform:** Home Assistant Custom Integration
 **Development Language:** English (code, comments, variables)
@@ -195,7 +195,7 @@ Loaded only when `expose_http_settings` is enabled. All read from the `HttpSetti
 
 **Sync Time button:** writes `hr`, `mi` and `zs=1` (Manual) atomically — the device ignores `hr`/`mi` while Internet time sync is active, so manual mode must be set together with the time. The user can switch back to Internet sync via the Time Source select.
 
-**Read-only diagnostics:** `sw` ("Switch Input") and `sp` ("Mains Voltage") are exposed as sensors only and are **write-blocked** at the HTTP client level (§6.4). Their real meaning is **unconfirmed** — the device reports a value (observed: `4`) that matches neither originally assumed encoding (`sw`: 0/1/2, `sp`: 0/1), and both fields always carry the same value. No value mapping is applied (raw value shown) and both sensors are **disabled by default**.
+**Read-only diagnostics:** `sw` ("Switch Input") and `sp` ("Mains Voltage") are exposed as read-only sensors (no writable entity). Their real meaning is **unconfirmed** — the device reports a value (observed: `4`) that matches neither originally assumed encoding (`sw`: 0/1/2, `sp`: 0/1), and both fields always carry the same value. No value mapping is applied (raw value shown) and both sensors are **disabled by default**. On settings writes they are written back unchanged like every other field (§6.4).
 
 ---
 
@@ -260,19 +260,21 @@ The chosen list is stored in `hass.data[DOMAIN][entry_id]["platforms"]` and used
 `HttpSettingsCoordinator` is a standard `DataUpdateCoordinator[dict[str, str]]` that polls `/radio.cfg` every `http_poll_interval` minutes. Writes go through `async_set(fields)`:
 
 1. GET the full current `/radio.cfg`
-2. patch the changed field(s) into the full dict
-3. POST the **complete** dict to `/en/general.cgi`
+2. patch the changed field(s) into that dict
+3. POST the **managed settings** to `/<lang>/general.cgi`
 4. `async_refresh()` to re-read the resulting state
 
-**Decision:** Always write the full settings document, never a single field.
+**Decision:** Replicate the device's own settings form exactly (captured from the browser network inspector).
 
-**Context:** `/en/general.cgi` accepts a full form post; posting a partial set risks the device resetting unlisted fields to defaults.
+**The POST mirrors the device form** (`async_post_general` in `http_client.py`):
+- **Path:** `/<lang>/general.cgi`, where `<lang>` is the device language (`ln`) — e.g. `/de/general.cgi` on a German device. The device serves the settings form per locale.
+- **`save=Save`** is included — it is the form's submit field. **Without it the CGI returns HTTP 200 but does not persist the change.**
+- **Only managed fields are sent** (`_VALUE_FIELDS` = `bb co bl dm ms sm ln hr mi zs tz ah am st ss sw sp`). All other `/radio.cfg` keys (network, station presets, firmware URL, MAC) are not part of the form and are omitted — the device ignores them and does not reset them.
+- **Checkbox fields** (`aw sz ea et es`) are sent as `"1"` when on and **omitted** when off (HTML form semantics: an absent checkbox is read as off).
 
-**Why this approach:** Read-Modify-Write preserves all other settings and makes multi-field changes (time entities, Sync Time) atomic from the device's perspective.
+**Why this is safe:** the device's own form posts exactly this field set, so fields outside it are not managed by `general.cgi` and are never reset by omission. Read-Modify-Write keeps every other managed field at its current value, so only the field being set changes.
 
-**Safety rails in `http_client.py`:**
-- **Blocked fields** (`sw`, `sp`) are stripped from every POST — they are hardware-level (switch-input function, mains voltage) and must never be set over HTTP. They remain readable as diagnostic sensors.
-- **Checkbox fields** (`aw`, `sz`, `ea`, `et`, `es`) are always included explicitly as `"1"` or `""`, because an omitted checkbox would read as "off" and could silently clear a setting.
+> **Status — superseded decisions (verified against the real device):** Two earlier approaches were wrong. (1) Stripping `sw`/`sp` from a full-document POST made the device reset them to default on every write. (2) Posting the *complete* `/radio.cfg` to `/en/general.cgi` **without** `save=Save` returned HTTP 200 but never persisted — so HTTP settings writes never actually applied. The current approach (managed-field allowlist + `save=Save` + language-matched path) fixes both. `sw`/`sp` are part of the form (sent with their current value) but remain read-only at the entity level.
 
 The HTTP coordinator is started in the background (`async_create_task`) so an unreachable HTTP interface never blocks the main setup — entities simply stay `unavailable` until the first successful fetch.
 
@@ -374,6 +376,8 @@ The release process follows the central `RELEASE_GUIDE.md` (HACS ZIP release, ve
 
 | Doc Version | Date | Changes |
 |-------------|------|---------|
+| 1.4.0 | June 2026 | §6.4 rewritten: settings write now mirrors the device form — managed-field allowlist + `save=Save` + language path (writes never persisted before, the `save` field was missing) |
+| 1.3.0 | June 2026 | §6.4: stopped stripping `sw`/`sp` from the POST (interim step, superseded by 1.4.0) |
 | 1.2.1 | June 2026 | Clarified `sw`/`sp` diagnostic sensors: meaning unconfirmed, raw value shown (no mapping), disabled by default |
 | 1.2.0 | June 2026 | §6.5 device registration: documented serial number, MAC connection and configuration URL ("Visit" link) |
 | 1.1.0 | June 2026 | Added §6.6 note on local brand images (`brand/` folder, HA 2026.3 brands proxy API); updated file structure |

@@ -170,16 +170,16 @@ async def test_async_get_config_calls_raise_for_status():
 # ===========================================================================
 
 
-@pytest.mark.asyncio
-async def test_async_post_general_removes_blocked_fields():
-    client, hass = _make_client()
+async def _capture_post(client, fields):
+    """Run async_post_general and capture the POST url + form data."""
     mock_resp = AsyncMock()
     mock_resp.status = 200
     mock_resp.raise_for_status = MagicMock()
-    captured_data = {}
+    cap = {}
 
     def fake_post(url, data, timeout):
-        captured_data.update(data)
+        cap["url"] = url
+        cap["data"] = dict(data)
         return AsyncMock(
             __aenter__=AsyncMock(return_value=mock_resp),
             __aexit__=AsyncMock(return_value=False),
@@ -191,93 +191,60 @@ async def test_async_post_general_removes_blocked_fields():
         "custom_components.busch_radio_inet.http_client.async_get_clientsession",
         return_value=mock_session,
     ):
-        await client.async_post_general({"bb": "100", "sw": "1", "sp": "0"})
-
-    assert "sw" not in captured_data
-    assert "sp" not in captured_data
-    assert captured_data["bb"] == "100"
+        await client.async_post_general(fields)
+    return cap
 
 
 @pytest.mark.asyncio
-async def test_async_post_general_checkbox_on():
-    """Checkbox field with value '1' stays '1'."""
-    client, hass = _make_client()
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.raise_for_status = MagicMock()
-    captured_data = {}
+async def test_async_post_general_sends_managed_fields_with_save():
+    """Only managed fields are posted, plus save=Save, to the language path.
+    Non-managed fields (network/stations/firmware) are dropped."""
+    client, _ = _make_client()
+    cap = await _capture_post(client, {
+        "bb": "100", "dm": "1", "sm": "1", "sw": "4", "sp": "4", "ln": "de",
+        # non-managed fields that must not be sent:
+        "si": "MyWifi", "pw": "secret", "s1": "http://stream", "fw": "http://fw",
+    })
 
-    def fake_post(url, data, timeout):
-        captured_data.update(data)
-        return AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_resp),
-            __aexit__=AsyncMock(return_value=False),
-        )
-
-    mock_session = MagicMock()
-    mock_session.post = fake_post
-    with patch(
-        "custom_components.busch_radio_inet.http_client.async_get_clientsession",
-        return_value=mock_session,
-    ):
-        await client.async_post_general({"aw": "1"})
-
-    assert captured_data["aw"] == "1"
+    assert cap["data"]["save"] == "Save"
+    assert cap["url"].endswith("/de/general.cgi")
+    assert cap["data"]["bb"] == "100"
+    assert cap["data"]["dm"] == "1"
+    assert cap["data"]["sw"] == "4"
+    assert cap["data"]["sp"] == "4"
+    for k in ("si", "pw", "s1", "fw"):
+        assert k not in cap["data"]
 
 
 @pytest.mark.asyncio
-async def test_async_post_general_checkbox_off_when_missing():
-    """Checkbox field not in input → sent as '' (off)."""
-    client, hass = _make_client()
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.raise_for_status = MagicMock()
-    captured_data = {}
+async def test_async_post_general_checkbox_on_sent_as_1():
+    client, _ = _make_client()
+    cap = await _capture_post(client, {"aw": "1", "ln": "de"})
+    assert cap["data"]["aw"] == "1"
 
-    def fake_post(url, data, timeout):
-        captured_data.update(data)
-        return AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_resp),
-            __aexit__=AsyncMock(return_value=False),
-        )
 
-    mock_session = MagicMock()
-    mock_session.post = fake_post
-    with patch(
-        "custom_components.busch_radio_inet.http_client.async_get_clientsession",
-        return_value=mock_session,
-    ):
-        await client.async_post_general({"bb": "80"})
-
+@pytest.mark.asyncio
+async def test_async_post_general_checkbox_off_is_omitted():
+    """An 'off' checkbox is omitted entirely (mirrors the device's HTML form)."""
+    client, _ = _make_client()
+    cap = await _capture_post(client, {"bb": "80", "ln": "de"})
     for cb in ("aw", "sz", "ea", "et", "es"):
-        assert captured_data[cb] == "", f"Expected '' for checkbox {cb}"
+        assert cb not in cap["data"]
+
+
+@pytest.mark.asyncio
+async def test_async_post_general_defaults_to_en_path_without_ln():
+    client, _ = _make_client()
+    cap = await _capture_post(client, {"bb": "80"})
+    assert cap["url"].endswith("/en/general.cgi")
 
 
 @pytest.mark.asyncio
 async def test_async_post_general_checkbox_off_explicit():
-    """Checkbox field with '' value → stays ''."""
-    client, hass = _make_client()
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.raise_for_status = MagicMock()
-    captured_data = {}
-
-    def fake_post(url, data, timeout):
-        captured_data.update(data)
-        return AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_resp),
-            __aexit__=AsyncMock(return_value=False),
-        )
-
-    mock_session = MagicMock()
-    mock_session.post = fake_post
-    with patch(
-        "custom_components.busch_radio_inet.http_client.async_get_clientsession",
-        return_value=mock_session,
-    ):
-        await client.async_post_general({"aw": ""})
-
-    assert captured_data["aw"] == ""
+    """Checkbox field with '' value → omitted (off), not sent."""
+    client, _ = _make_client()
+    cap = await _capture_post(client, {"aw": "", "ln": "de"})
+    assert "aw" not in cap["data"]
 
 
 @pytest.mark.asyncio
