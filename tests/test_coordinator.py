@@ -1,5 +1,7 @@
 """Tests for BuschRadioCoordinator."""
 
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -333,3 +335,306 @@ def test_playing_stopped_when_already_none_no_callback():
     coord.register_callback(cb)
     coord.handle_packet({"MODE": "PLAYING STOPPED"})  # station_id already None
     cb.assert_not_called()
+
+
+# ===========================================================================
+# handle_packet – energy mode
+# ===========================================================================
+
+
+def test_handle_packet_energy_mode():
+    coord, _, _ = make_coordinator()
+    cb = MagicMock()
+    coord.register_callback(cb)
+    coord.handle_packet({"ENERGY_MODE": "ECO"})
+    assert coord.energy_mode == "ECO"
+    cb.assert_called_once()
+
+
+def test_handle_packet_energy_mode_no_change_no_callback():
+    coord, _, _ = make_coordinator()
+    coord.energy_mode = "PREMIUM"
+    cb = MagicMock()
+    coord.register_callback(cb)
+    coord.handle_packet({"ENERGY_MODE": "PREMIUM"})
+    cb.assert_not_called()
+
+
+# ===========================================================================
+# set_media_title / set_media_image
+# ===========================================================================
+
+
+def test_set_media_title_updates_and_notifies():
+    # No artwork client attached -> _schedule_artwork_lookup returns early.
+    coord, _, _ = make_coordinator()
+    cb = MagicMock()
+    coord.register_callback(cb)
+    coord.set_media_title("Queen - Bohemian Rhapsody")
+    assert coord.media_title == "Queen - Bohemian Rhapsody"
+    cb.assert_called_once()
+
+
+def test_set_media_title_no_change_no_callback():
+    coord, _, _ = make_coordinator()
+    coord.media_title = "Same"
+    cb = MagicMock()
+    coord.register_callback(cb)
+    coord.set_media_title("Same")
+    cb.assert_not_called()
+
+
+def test_set_media_image_updates_and_notifies():
+    coord, _, _ = make_coordinator()
+    cb = MagicMock()
+    coord.register_callback(cb)
+    coord.set_media_image("http://img.example/cover.jpg")
+    assert coord.media_image_url == "http://img.example/cover.jpg"
+    cb.assert_called_once()
+
+
+def test_set_media_image_no_change_no_callback():
+    coord, _, _ = make_coordinator()
+    coord.media_image_url = "http://img.example/cover.jpg"
+    cb = MagicMock()
+    coord.register_callback(cb)
+    coord.set_media_image("http://img.example/cover.jpg")
+    cb.assert_not_called()
+
+
+# ===========================================================================
+# ICY fetcher attach / stop
+# ===========================================================================
+
+
+def test_set_and_stop_icy_fetcher():
+    coord, _, _ = make_coordinator()
+    fetcher = MagicMock()
+    coord.set_icy_fetcher(fetcher)
+    coord.stop_icy()
+    fetcher.stop.assert_called_once()
+
+
+def test_stop_icy_without_fetcher_is_safe():
+    coord, _, _ = make_coordinator()
+    coord.stop_icy()  # must not raise
+
+
+# ===========================================================================
+# Artwork task cancellation
+# ===========================================================================
+
+
+def test_stop_artwork_cancels_task():
+    coord, _, _ = make_coordinator()
+    task = MagicMock()
+    coord._artwork_task = task
+    coord.stop_artwork()
+    task.cancel.assert_called_once()
+    assert coord._artwork_task is None
+
+
+def test_stop_artwork_without_task_is_safe():
+    coord, _, _ = make_coordinator()
+    coord.stop_artwork()  # must not raise
+
+
+# ===========================================================================
+# start_icy_if_playing
+# ===========================================================================
+
+
+def test_start_icy_if_playing_starts_when_playing():
+    coord, _, _ = make_coordinator()
+    fetcher = MagicMock()
+    coord.set_icy_fetcher(fetcher)
+    coord.power = True
+    coord.station_id = 2
+    coord.station_list = [{"id": 2, "name": "NDR", "url": "http://ndr.example"}]
+    coord.start_icy_if_playing()
+    fetcher.start.assert_called_once_with("http://ndr.example")
+
+
+def test_start_icy_if_playing_does_nothing_when_off():
+    coord, _, _ = make_coordinator()
+    fetcher = MagicMock()
+    coord.set_icy_fetcher(fetcher)
+    coord.power = False
+    coord.station_id = 2
+    coord.start_icy_if_playing()
+    fetcher.start.assert_not_called()
+
+
+# ===========================================================================
+# handle_notification dispatch
+# ===========================================================================
+
+
+def test_handle_notification_station_changed_stops_fetcher():
+    coord, _, _ = make_coordinator()
+    fetcher = MagicMock()
+    coord.set_icy_fetcher(fetcher)
+    coord.handle_notification("STATION_CHANGED")
+    fetcher.stop.assert_called_once()
+
+
+def test_handle_notification_url_is_playing_starts_fetcher():
+    coord, _, _ = make_coordinator()
+    fetcher = MagicMock()
+    coord.set_icy_fetcher(fetcher)
+    coord.station_id = 2
+    coord.station_list = [{"id": 2, "name": "NDR", "url": "http://ndr.example"}]
+    coord.handle_notification("URL_IS_PLAYING")
+    fetcher.start.assert_called_once_with("http://ndr.example")
+
+
+def test_handle_notification_url_is_playing_unknown_station_does_not_start():
+    coord, _, _ = make_coordinator()
+    fetcher = MagicMock()
+    coord.set_icy_fetcher(fetcher)
+    coord.station_id = 99  # not present in the station list
+    coord.station_list = [{"id": 2, "name": "NDR", "url": "http://ndr.example"}]
+    coord.handle_notification("URL_IS_PLAYING")
+    fetcher.start.assert_not_called()
+
+
+def test_handle_notification_power_off_stops_fetcher_and_clears():
+    coord, _, _ = make_coordinator()
+    fetcher = MagicMock()
+    coord.set_icy_fetcher(fetcher)
+    coord.media_title = "Queen - X"
+    coord.media_image_url = "http://img"
+    coord.handle_notification("POWER_OFF")
+    fetcher.stop.assert_called_once()
+    assert coord.media_title is None
+    assert coord.media_image_url is None
+
+
+def test_handle_notification_unknown_event_is_ignored():
+    coord, _, _ = make_coordinator()
+    coord.handle_notification("SOMETHING_ELSE")  # must not raise
+
+
+# ===========================================================================
+# _schedule_artwork_lookup
+# ===========================================================================
+
+
+def test_schedule_artwork_lookup_cancels_previous_and_bumps_generation():
+    coord, hass, _ = make_coordinator()
+    coord.set_artwork_client(MagicMock())
+    old_task = MagicMock()
+    coord._artwork_task = old_task
+
+    created = []
+
+    def fake_create_task(coro):
+        coro.close()  # avoid "coroutine was never awaited" warning
+        new_task = MagicMock()
+        created.append(new_task)
+        return new_task
+
+    hass.async_create_task = MagicMock(side_effect=fake_create_task)
+
+    gen_before = coord._artwork_generation
+    coord._schedule_artwork_lookup()
+
+    old_task.cancel.assert_called_once()
+    assert coord._artwork_generation == gen_before + 1
+    assert coord._artwork_task is created[0]
+
+
+def test_schedule_artwork_lookup_without_client_is_noop():
+    coord, hass, _ = make_coordinator()
+    hass.async_create_task = MagicMock()
+    coord._schedule_artwork_lookup()  # no artwork client
+    hass.async_create_task.assert_not_called()
+
+
+# ===========================================================================
+# _async_artwork_lookup (Tier 1 music + Tier 2 station logo)
+# ===========================================================================
+
+
+def _artwork_coord(title=None, station=("NDR", 2, "http://ndr.example")):
+    """Build a coordinator with an attached artwork client mock."""
+    coord, _, _ = make_coordinator()
+    client = MagicMock()
+    client.fetch_music_artwork = AsyncMock(return_value=None)
+    client.fetch_station_logo = AsyncMock(return_value=None)
+    coord.set_artwork_client(client)
+    coord.media_title = title
+    name, sid, url = station
+    coord.station_name = name
+    coord.station_id = sid
+    coord.station_list = [{"id": sid, "name": name, "url": url}]
+    coord._artwork_generation = 1
+    return coord, client
+
+
+async def test_artwork_lookup_tier1_dash_hit():
+    coord, client = _artwork_coord(title="Queen - Bohemian Rhapsody")
+    client.fetch_music_artwork.return_value = "http://art/cover.jpg"
+    await coord._async_artwork_lookup(1)
+    client.fetch_music_artwork.assert_awaited_once_with("Queen", "Bohemian Rhapsody")
+    client.fetch_station_logo.assert_not_awaited()
+    assert coord.media_image_url == "http://art/cover.jpg"
+
+
+async def test_artwork_lookup_tier1_slash_hit():
+    coord, client = _artwork_coord(title="Bohemian Rhapsody / Queen")
+    client.fetch_music_artwork.return_value = "http://art/cover.jpg"
+    await coord._async_artwork_lookup(1)
+    client.fetch_music_artwork.assert_awaited_once_with("Queen", "Bohemian Rhapsody")
+    assert coord.media_image_url == "http://art/cover.jpg"
+
+
+async def test_artwork_lookup_tier1_miss_falls_back_to_station_logo():
+    coord, client = _artwork_coord(title="Queen - Bohemian Rhapsody")
+    client.fetch_music_artwork.return_value = None
+    client.fetch_station_logo.return_value = "http://logo.png"
+    await coord._async_artwork_lookup(1)
+    client.fetch_station_logo.assert_awaited_once_with("http://ndr.example", "NDR")
+    assert coord.media_image_url == "http://logo.png"
+
+
+async def test_artwork_lookup_no_separator_uses_station_logo():
+    coord, client = _artwork_coord(title="Just A Plain Title")
+    client.fetch_station_logo.return_value = "http://logo.png"
+    await coord._async_artwork_lookup(1)
+    client.fetch_music_artwork.assert_not_awaited()
+    client.fetch_station_logo.assert_awaited_once()
+    assert coord.media_image_url == "http://logo.png"
+
+
+async def test_artwork_lookup_ambiguous_separators_uses_station_logo():
+    # Both " - " and " / " present -> ambiguous -> Tier 1 skipped.
+    coord, client = _artwork_coord(title="A - B / C")
+    client.fetch_station_logo.return_value = "http://logo.png"
+    await coord._async_artwork_lookup(1)
+    client.fetch_music_artwork.assert_not_awaited()
+    assert coord.media_image_url == "http://logo.png"
+
+
+async def test_artwork_lookup_stale_generation_does_not_write():
+    coord, client = _artwork_coord(title="Queen - X")
+    client.fetch_music_artwork.return_value = "http://art/cover.jpg"
+    coord._artwork_generation = 10  # current generation
+    await coord._async_artwork_lookup(9)  # stale -> result discarded
+    assert coord.media_image_url is None
+
+
+async def test_artwork_lookup_cancelled_is_swallowed():
+    coord, client = _artwork_coord(title="Queen - X")
+    client.fetch_music_artwork.side_effect = asyncio.CancelledError
+    await coord._async_artwork_lookup(1)  # must not raise
+    assert coord.media_image_url is None
+
+
+async def test_artwork_lookup_logo_without_station_id():
+    # station_id is falsy -> _get_current_stream_url returns None.
+    coord, client = _artwork_coord(title="Just A Title", station=("NDR", None, ""))
+    client.fetch_station_logo.return_value = None
+    await coord._async_artwork_lookup(1)
+    client.fetch_station_logo.assert_awaited_once_with(None, "NDR")
+    assert coord.media_image_url is None

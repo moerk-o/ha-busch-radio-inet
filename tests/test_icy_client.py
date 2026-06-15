@@ -458,3 +458,80 @@ async def test_read_loop_no_callback_for_same_title():
         await conn._read_loop(stream, metaint)
 
     on_title.assert_called_once_with("Same Track")
+
+
+# ===========================================================================
+# IcyFetcher protocol stubs
+# ===========================================================================
+
+
+def test_icy_fetcher_protocol_stub_methods():
+    """The Protocol stub bodies (`...`) are executed for coverage."""
+    from custom_components.busch_radio_inet.icy_client import IcyFetcher
+
+    assert IcyFetcher.start(MagicMock(), "http://stream") is None
+    assert IcyFetcher.stop(MagicMock()) is None
+
+
+# ===========================================================================
+# IcyIntervalScheduler – additional branches
+# ===========================================================================
+
+
+def test_interval_stop_cancels_running_fetch_task():
+    scheduler, _, _, _ = make_scheduler()
+    running = MagicMock()
+    running.done.return_value = False
+    scheduler._fetch_task = running
+    scheduler.stop()
+    running.cancel.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_interval_fetch_creates_task_when_none_running():
+    scheduler, hass, _, _ = make_scheduler()
+
+    created = []
+
+    def fake_create_task(coro):
+        coro.close()  # avoid "coroutine was never awaited" warning
+        task = MagicMock()
+        task.done.return_value = True
+        created.append(task)
+        return task
+
+    hass.loop.create_task = MagicMock(side_effect=fake_create_task)
+    scheduler._url = "http://stream.example.com"
+    scheduler._fetch_task = None
+    await scheduler._async_interval_fetch()
+    assert created  # a fresh fetch task was created
+
+
+# ===========================================================================
+# IcyPersistentConnection._run – successful connect path
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_run_with_metaint_calls_read_loop():
+    conn, _, on_title = make_persistent()
+    conn._read_loop = AsyncMock()
+
+    mock_resp = MagicMock()
+    mock_resp.headers = {"icy-metaint": "16"}
+    mock_resp.content = MagicMock()
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=AsyncMock(
+        __aenter__=AsyncMock(return_value=mock_resp),
+        __aexit__=AsyncMock(return_value=False),
+    ))
+
+    with patch(
+        "custom_components.busch_radio_inet.icy_client.async_get_clientsession",
+        return_value=mock_session,
+    ):
+        await conn._run("http://stream.example.com")
+
+    conn._read_loop.assert_awaited_once()
+    on_title.assert_not_called()

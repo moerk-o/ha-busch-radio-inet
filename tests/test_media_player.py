@@ -603,3 +603,129 @@ async def test_unloading_both_devices_stops_listener(
         await hass.async_block_till_done()
 
     mock_listener.stop.assert_called_once()
+
+
+# ===========================================================================
+# media_artist (parsed from ICY StreamTitle)
+# ===========================================================================
+
+
+def test_media_artist_dash_format():
+    player, _, _ = make_player(media_title="Queen - Bohemian Rhapsody")
+    assert player.media_artist == "Queen"
+
+
+def test_media_artist_slash_format():
+    player, _, _ = make_player(media_title="Bohemian Rhapsody / Queen")
+    assert player.media_artist == "Queen"
+
+
+def test_media_artist_none_without_separator():
+    player, _, _ = make_player(media_title="Just A Plain Title")
+    assert player.media_artist is None
+
+
+def test_media_artist_none_when_ambiguous():
+    player, _, _ = make_player(media_title="A - B / C")
+    assert player.media_artist is None
+
+
+def test_media_artist_none_when_no_title():
+    player, _, _ = make_player(media_title=None)
+    assert player.media_artist is None
+
+
+# ===========================================================================
+# Setup with HTTP settings + ICY enabled (covers __init__ option branches and
+# all HTTP entity platform setups)
+# ===========================================================================
+
+
+_FULL_HTTP_CONFIG = {
+    "bb": "80", "co": "60", "tz": "1", "st": "30", "ss": "60",
+    "bl": "2", "dm": "0", "ms": "1", "sm": "0", "ln": "de", "zs": "0",
+    "aw": "", "sz": "1", "ea": "1", "et": "", "es": "",
+    "hr": "14", "mi": "30", "ah": "7", "am": "0",
+    "sw": "0", "sp": "1",
+}
+
+
+@pytest.mark.parametrize("icy_mode", ["live", "interval"])
+async def test_setup_with_http_and_icy(
+    hass: HomeAssistant, config_entry_data, device_serial, icy_mode
+) -> None:
+    """Setup with expose_http_settings + ICY creates all settings entities."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    entry = MockConfigEntry(
+        domain="busch_radio_inet",
+        data=config_entry_data,
+        options={
+            "expose_http_settings": True,
+            "http_poll_interval": 5,
+            "icy_enabled": True,
+            "icy_mode": icy_mode,
+            "icy_interval": 60,
+        },
+        unique_id=device_serial,
+        version=1,
+    )
+
+    with patch(
+        "custom_components.busch_radio_inet.SharedUDPListener"
+    ) as mock_listener_cls, patch(
+        "custom_components.busch_radio_inet.BuschRadioUDPClient"
+    ) as mock_client_cls, patch(
+        "custom_components.busch_radio_inet.coordinator.async_track_time_interval",
+        return_value=MagicMock(),
+    ), patch(
+        "custom_components.busch_radio_inet.ArtworkClient"
+    ), patch(
+        "custom_components.busch_radio_inet.async_call_later",
+        return_value=MagicMock(),
+    ), patch(
+        "custom_components.busch_radio_inet.HttpSettingsClient"
+    ) as mock_http_cls:
+        mock_listener = MagicMock()
+        mock_listener.start = AsyncMock()
+        mock_listener.stop = MagicMock()
+        mock_listener.has_devices = False
+        mock_listener_cls.return_value = mock_listener
+
+        mock_client = MagicMock()
+        mock_client.send_get = AsyncMock()
+        mock_client_cls.return_value = mock_client
+
+        mock_http = MagicMock()
+        mock_http.async_get_config = AsyncMock(return_value=dict(_FULL_HTTP_CONFIG))
+        mock_http_cls.return_value = mock_http
+
+        entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        # All HTTP settings platforms loaded
+        assert hass.states.async_all("number")
+        assert hass.states.async_all("select")
+        assert hass.states.async_all("switch")
+        assert hass.states.async_all("time")
+        assert hass.states.async_all("button")
+        assert hass.states.async_all("sensor")
+
+        # Clean unload (also stops the HTTP coordinator's update timer)
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_async_reload_entry_triggers_reload() -> None:
+    """async_reload_entry delegates to config_entries.async_reload."""
+    from custom_components.busch_radio_inet import async_reload_entry
+
+    hass = MagicMock()
+    hass.config_entries.async_reload = AsyncMock()
+    entry = MagicMock()
+    entry.entry_id = "abc123"
+
+    await async_reload_entry(hass, entry)
+
+    hass.config_entries.async_reload.assert_awaited_once_with("abc123")
