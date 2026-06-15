@@ -1,6 +1,6 @@
 # Technical Reference: Home Assistant Integration `busch_radio_inet`
 
-**Version:** 1.2.0
+**Version:** 1.2.1
 **Date:** June 2026
 **Target Platform:** Home Assistant Custom Integration
 **Development Language:** English (code, comments, variables)
@@ -195,7 +195,7 @@ Loaded only when `expose_http_settings` is enabled. All read from the `HttpSetti
 
 **Sync Time button:** writes `hr`, `mi` and `zs=1` (Manual) atomically — the device ignores `hr`/`mi` while Internet time sync is active, so manual mode must be set together with the time. The user can switch back to Internet sync via the Time Source select.
 
-**Read-only diagnostics:** `sw` (Switch Input) and `sp` (Mains Voltage) are exposed as sensors only. They are also **write-blocked** at the HTTP client level (§6.4).
+**Read-only diagnostics:** `sw` ("Switch Input") and `sp` ("Mains Voltage") are exposed as sensors only and are **write-blocked** at the HTTP client level (§6.4). Their real meaning is **unconfirmed** — the device reports a value (observed: `4`) that matches neither originally assumed encoding (`sw`: 0/1/2, `sp`: 0/1), and both fields always carry the same value. No value mapping is applied (raw value shown) and both sensors are **disabled by default**.
 
 ---
 
@@ -374,6 +374,7 @@ The release process follows the central `RELEASE_GUIDE.md` (HACS ZIP release, ve
 
 | Doc Version | Date | Changes |
 |-------------|------|---------|
+| 1.2.1 | June 2026 | Clarified `sw`/`sp` diagnostic sensors: meaning unconfirmed, raw value shown (no mapping), disabled by default |
 | 1.2.0 | June 2026 | §6.5 device registration: documented serial number, MAC connection and configuration URL ("Visit" link) |
 | 1.1.0 | June 2026 | Added §6.6 note on local brand images (`brand/` folder, HA 2026.3 brands proxy API); updated file structure |
 | 1.0.0 | June 2026 | Initial technical reference — communication architecture, push coordinator, ICY strategies, artwork concurrency & sources, HTTP settings Read-Modify-Write, entity catalogue |
