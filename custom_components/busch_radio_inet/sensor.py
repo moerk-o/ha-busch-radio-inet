@@ -93,18 +93,28 @@ class _HttpSettingsSensor(CoordinatorEntity[HttpSettingsCoordinator], SensorEnti
 
 
 class SwitchInputSensor(_HttpSettingsSensor):
-    """Switch input function (sw): Switch / Button / Automatic."""
+    """Raw 'sw' field from /radio.cfg.
 
-    _VALUE_TO_STATE = {"0": "Switch", "1": "Button", "2": "Automatic"}
+    The device reports a value (observed: '4') that does not match the
+    originally assumed 0/1/2 encoding, so no value mapping is applied — the raw
+    value is shown. Meaning unconfirmed, therefore disabled by default.
+    """
+
+    _attr_entity_registry_enabled_default = False
 
     def __init__(self, coordinator: HttpSettingsCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry, "sw", "Switch Input")
 
 
 class MainsVoltageSensor(_HttpSettingsSensor):
-    """Mains voltage setting (sp): 110V / 230V."""
+    """Raw 'sp' field from /radio.cfg.
 
-    _VALUE_TO_STATE = {"0": "110V", "1": "230V"}
+    The device reports a value (observed: '4') that does not match the
+    originally assumed 0/1 encoding, so no value mapping is applied — the raw
+    value is shown. Meaning unconfirmed, therefore disabled by default.
+    """
+
+    _attr_entity_registry_enabled_default = False
 
     def __init__(self, coordinator: HttpSettingsCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry, "sp", "Mains Voltage")

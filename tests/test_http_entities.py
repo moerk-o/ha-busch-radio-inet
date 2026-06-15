@@ -519,29 +519,26 @@ class TestBuschRadioEnergyModeSensor:
 class TestSwitchInputSensor:
     def _make(self, data=_UNSET):
         from custom_components.busch_radio_inet.sensor import SwitchInputSensor
-        coord = make_http_coordinator({"sw": "0"} if data is _UNSET else data)
+        coord = make_http_coordinator({"sw": "4"} if data is _UNSET else data)
         entry = make_entry()
         return SwitchInputSensor(coord, entry), coord
 
-    def test_native_value_switch(self):
+    def test_native_value_is_raw(self):
+        # No value mapping is applied — the raw device value is shown as-is.
+        entity, _ = self._make({"sw": "4"})
+        assert entity.native_value == "4"
+
+    def test_native_value_passthrough_zero(self):
         entity, _ = self._make({"sw": "0"})
-        assert entity.native_value == "Switch"
-
-    def test_native_value_button(self):
-        entity, _ = self._make({"sw": "1"})
-        assert entity.native_value == "Button"
-
-    def test_native_value_automatic(self):
-        entity, _ = self._make({"sw": "2"})
-        assert entity.native_value == "Automatic"
-
-    def test_native_value_raw_when_unknown(self):
-        entity, _ = self._make({"sw": "99"})
-        assert entity.native_value == "99"
+        assert entity.native_value == "0"
 
     def test_native_value_none_when_missing(self):
         entity, _ = self._make({})
         assert entity.native_value is None
+
+    def test_disabled_by_default(self):
+        entity, _ = self._make()
+        assert entity.entity_registry_enabled_default is False
 
     def test_unavailable_when_data_none(self):
         from custom_components.busch_radio_inet.sensor import SwitchInputSensor
@@ -555,14 +552,18 @@ class TestSwitchInputSensor:
 class TestMainsVoltageSensor:
     def _make(self, data=_UNSET):
         from custom_components.busch_radio_inet.sensor import MainsVoltageSensor
-        coord = make_http_coordinator({"sp": "1"} if data is _UNSET else data)
+        coord = make_http_coordinator({"sp": "4"} if data is _UNSET else data)
         entry = make_entry()
         return MainsVoltageSensor(coord, entry), coord
 
-    def test_native_value_230v(self):
-        entity, _ = self._make({"sp": "1"})
-        assert entity.native_value == "230V"
+    def test_native_value_is_raw(self):
+        entity, _ = self._make({"sp": "4"})
+        assert entity.native_value == "4"
 
-    def test_native_value_110v(self):
+    def test_native_value_passthrough_zero(self):
         entity, _ = self._make({"sp": "0"})
-        assert entity.native_value == "110V"
+        assert entity.native_value == "0"
+
+    def test_disabled_by_default(self):
+        entity, _ = self._make()
+        assert entity.entity_registry_enabled_default is False
