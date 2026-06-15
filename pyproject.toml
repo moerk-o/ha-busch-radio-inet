@@ -6,8 +6,11 @@ filterwarnings = [
     "ignore::DeprecationWarning",
 ]
 
+# The pytest-homeassistant-custom-component plugin loads the integration from
+# tests/custom_components/, so coverage must measure that copy (kept in sync via
+# sync_and_test.sh). See TESTING_GUIDE.md section 3.7.1.
 [tool.coverage.run]
-source = ["custom_components/busch_radio_inet"]
+source = ["tests/custom_components/busch_radio_inet"]
 
 [tool.coverage.report]
 show_missing = true

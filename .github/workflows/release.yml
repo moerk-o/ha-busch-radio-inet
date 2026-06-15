@@ -20,8 +20,8 @@ jobs:
           python-version: '3.12'
       - name: Install dependencies
         run: pip install -r requirements-test.txt
-      - name: Run tests
-        run: pytest --cov=custom_components/busch_radio_inet
+      - name: Sync integration into tests/ and run tests
+        run: ./sync_and_test.sh --cov=tests/custom_components/busch_radio_inet
 
   release:
     name: Release Busch-Radio iNet
