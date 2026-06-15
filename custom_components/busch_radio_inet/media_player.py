@@ -10,10 +10,15 @@ from homeassistant.components.media_player import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import (
+    CONNECTION_NETWORK_MAC,
+    DeviceInfo,
+    format_mac,
+)
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
+    CONF_HOST,
     CONF_NAME,
     DOMAIN,
     MANUFACTURER,
@@ -80,13 +85,20 @@ class BuschRadioMediaPlayer(MediaPlayerEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
+        info = DeviceInfo(
             identifiers={(DOMAIN, self._entry.unique_id)},
             name=self._entry.data[CONF_NAME],
             manufacturer=MANUFACTURER,
             model=MODEL,
             sw_version=self._coordinator.sw_version,
+            serial_number=self._coordinator.serial_number,
+            configuration_url=f"http://{self._entry.data[CONF_HOST]}",
         )
+        if self._coordinator.mac_address:
+            info["connections"] = {
+                (CONNECTION_NETWORK_MAC, format_mac(self._coordinator.mac_address))
+            }
+        return info
 
     # ------------------------------------------------------------------
     # Availability

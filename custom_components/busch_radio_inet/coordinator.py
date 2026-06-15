@@ -38,6 +38,7 @@ class BuschRadioCoordinator:
         self.device_name: str | None = None
         self.sw_version: str | None = None
         self.serial_number: str | None = None
+        self.mac_address: str | None = None
         self.energy_mode: str | None = None
 
         self._callbacks: list[Callable[[], None]] = []
@@ -174,6 +175,7 @@ class BuschRadioCoordinator:
             self.serial_number = fields.get("SERNO")
             self.sw_version = fields.get("SW-VERSION")
             self.device_name = fields.get("NAME")
+            self.mac_address = fields.get("MAC")
             changed = True
 
         if changed:

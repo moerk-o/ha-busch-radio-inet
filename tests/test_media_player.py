@@ -8,6 +8,7 @@ from homeassistant.components.media_player import (
     MediaPlayerState,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
 
 from custom_components.busch_radio_inet.coordinator import BuschRadioCoordinator
 from custom_components.busch_radio_inet.media_player import (
@@ -40,6 +41,7 @@ def make_coordinator(**kwargs):
     coord.station_list = kwargs.get("station_list", [])
     coord.sw_version = kwargs.get("sw_version", "03.12")
     coord.serial_number = kwargs.get("serial_number", "78C40E33745C")
+    coord.mac_address = kwargs.get("mac_address", None)
     coord.is_ready = kwargs.get("is_ready", True)
     coord.media_title = kwargs.get("media_title", None)
     coord.media_image_url = kwargs.get("media_image_url", None)
@@ -228,6 +230,30 @@ def test_device_info_contains_sw_version():
     coord.sw_version = "03.12"
     info = player.device_info
     assert info["sw_version"] == "03.12"
+
+
+def test_device_info_contains_serial_number():
+    player, _, _ = make_player(serial_number="78C40E33745C")
+    info = player.device_info
+    assert info["serial_number"] == "78C40E33745C"
+
+
+def test_device_info_contains_configuration_url():
+    player, _, _ = make_player()
+    info = player.device_info
+    assert info["configuration_url"] == "http://192.168.1.179"
+
+
+def test_device_info_contains_mac_connection():
+    player, _, _ = make_player(mac_address="78:C4:0E:33:74:5C")
+    info = player.device_info
+    assert (CONNECTION_NETWORK_MAC, "78:c4:0e:33:74:5c") in info["connections"]
+
+
+def test_device_info_no_connections_without_mac():
+    player, _, _ = make_player(mac_address=None)
+    info = player.device_info
+    assert "connections" not in info
 
 
 # ===========================================================================
