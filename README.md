@@ -199,6 +199,8 @@ Enable **Expose device settings as HA entities** in the integration options and 
 
 This project is open source and contributions are warmly welcomed! Issues for bugs or feature requests are just as appreciated as pull requests for code improvements.
 
+For a deep dive into the internal design (UDP protocol, state coordinator, ICY metadata, artwork lookup, HTTP settings), see the [Technical Reference](TECHNICAL_REFERENCE.md).
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
