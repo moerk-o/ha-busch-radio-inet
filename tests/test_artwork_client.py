@@ -561,3 +561,136 @@ async def test_mb_throttled_get_no_wait_when_interval_passed():
         await client._mb_throttled_get(session, "https://musicbrainz.org/ws/2/recording/")
 
     assert len(sleep_called) == 0
+
+
+_SESSION_PATCH = "custom_components.busch_radio_inet.artwork_client.async_get_clientsession"
+
+
+# ===========================================================================
+# _fetch_itunes – cancellation
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_itunes_cancelled_propagates():
+    client, _ = make_client()
+    session = MagicMock()
+    session.get = MagicMock(side_effect=asyncio.CancelledError)
+    with patch(_SESSION_PATCH, return_value=session):
+        with pytest.raises(asyncio.CancelledError):
+            await client._fetch_itunes("Artist", "Song")
+
+
+# ===========================================================================
+# _fetch_musicbrainz – error/empty branches and cancellation
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_musicbrainz_non_200_returns_none():
+    client, _ = make_client()
+    with patch.object(client, "_fetch_itunes", new=AsyncMock(return_value=None)), \
+         patch.object(client, "_mb_throttled_get", new=AsyncMock(return_value=_make_response(500))), \
+         patch(_SESSION_PATCH, return_value=MagicMock()):
+        assert await client.fetch_music_artwork("A", "B") is None
+
+
+@pytest.mark.asyncio
+async def test_musicbrainz_no_recordings_returns_none():
+    client, _ = make_client()
+    mb = _make_response(200, {"recordings": []})
+    with patch.object(client, "_fetch_itunes", new=AsyncMock(return_value=None)), \
+         patch.object(client, "_mb_throttled_get", new=AsyncMock(return_value=mb)), \
+         patch(_SESSION_PATCH, return_value=MagicMock()):
+        assert await client.fetch_music_artwork("A", "B") is None
+
+
+@pytest.mark.asyncio
+async def test_musicbrainz_no_releases_returns_none():
+    client, _ = make_client()
+    mb = _make_response(200, {"recordings": [{"score": 100, "releases": []}]})
+    with patch.object(client, "_fetch_itunes", new=AsyncMock(return_value=None)), \
+         patch.object(client, "_mb_throttled_get", new=AsyncMock(return_value=mb)), \
+         patch(_SESSION_PATCH, return_value=MagicMock()):
+        assert await client.fetch_music_artwork("A", "B") is None
+
+
+@pytest.mark.asyncio
+async def test_musicbrainz_no_release_id_returns_none():
+    client, _ = make_client()
+    # A release without an "id" -> _best_release_id returns None.
+    mb = _make_response(200, {"recordings": [{"score": 100, "releases": [{}]}]})
+    with patch.object(client, "_fetch_itunes", new=AsyncMock(return_value=None)), \
+         patch.object(client, "_mb_throttled_get", new=AsyncMock(return_value=mb)), \
+         patch(_SESSION_PATCH, return_value=MagicMock()):
+        assert await client.fetch_music_artwork("A", "B") is None
+
+
+@pytest.mark.asyncio
+async def test_musicbrainz_caa_redirect_without_location_returns_none():
+    client, _ = make_client()
+    mb = _make_response(200, {"recordings": [{"score": 100, "releases": [{"id": "rel-1"}]}]})
+    caa = MagicMock()
+    caa.status = 307
+    caa.headers = {}  # redirect status but no Location header
+    session = _mock_session(caa)
+    with patch.object(client, "_fetch_itunes", new=AsyncMock(return_value=None)), \
+         patch.object(client, "_mb_throttled_get", new=AsyncMock(return_value=mb)), \
+         patch(_SESSION_PATCH, return_value=session):
+        assert await client.fetch_music_artwork("A", "B") is None
+
+
+@pytest.mark.asyncio
+async def test_musicbrainz_caa_non_redirect_status_returns_none():
+    client, _ = make_client()
+    mb = _make_response(200, {"recordings": [{"score": 100, "releases": [{"id": "rel-1"}]}]})
+    caa = MagicMock()
+    caa.status = 404  # no artwork available
+    caa.headers = {}
+    session = _mock_session(caa)
+    with patch.object(client, "_fetch_itunes", new=AsyncMock(return_value=None)), \
+         patch.object(client, "_mb_throttled_get", new=AsyncMock(return_value=mb)), \
+         patch(_SESSION_PATCH, return_value=session):
+        assert await client.fetch_music_artwork("A", "B") is None
+
+
+@pytest.mark.asyncio
+async def test_musicbrainz_cancelled_propagates():
+    client, _ = make_client()
+    with patch.object(client, "_mb_throttled_get", new=AsyncMock(side_effect=asyncio.CancelledError)), \
+         patch(_SESSION_PATCH, return_value=MagicMock()):
+        with pytest.raises(asyncio.CancelledError):
+            await client._fetch_musicbrainz("A", "B")
+
+
+# ===========================================================================
+# radio-browser – cancellation and name-lookup branches
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_radiobrowser_by_url_cancelled_propagates():
+    client, _ = make_client()
+    session = MagicMock()
+    session.get = MagicMock(side_effect=asyncio.CancelledError)
+    with patch(_SESSION_PATCH, return_value=session):
+        with pytest.raises(asyncio.CancelledError):
+            await client._fetch_radiobrowser_by_url("http://stream.example.com")
+
+
+@pytest.mark.asyncio
+async def test_radiobrowser_by_name_non_200_returns_none():
+    client, _ = make_client()
+    session = _mock_session(_make_response(500))
+    with patch(_SESSION_PATCH, return_value=session):
+        assert await client._fetch_radiobrowser_by_name("Station") is None
+
+
+@pytest.mark.asyncio
+async def test_radiobrowser_by_name_cancelled_propagates():
+    client, _ = make_client()
+    session = MagicMock()
+    session.get = MagicMock(side_effect=asyncio.CancelledError)
+    with patch(_SESSION_PATCH, return_value=session):
+        with pytest.raises(asyncio.CancelledError):
+            await client._fetch_radiobrowser_by_name("Station")
