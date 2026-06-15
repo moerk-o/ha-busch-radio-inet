@@ -1,6 +1,6 @@
 # Technical Reference: Home Assistant Integration `busch_radio_inet`
 
-**Version:** 1.0.0
+**Version:** 1.1.0
 **Date:** June 2026
 **Target Platform:** Home Assistant Custom Integration
 **Development Language:** English (code, comments, variables)
@@ -292,6 +292,8 @@ All entities reference the same identifier so they group under one device.
 
 Distributed via HACS as a ZIP release. `hacs.json` sets `zip_release: true` and `filename: busch_radio_inet.zip`; the `release.yml` workflow builds that ZIP from `custom_components/busch_radio_inet/` on every published GitHub release and runs the test suite first.
 
+**Brand images:** The integration ships its own icon locally in `custom_components/busch_radio_inet/brand/` (`icon.png` 256×256, `icon@2x.png` 512×512, transparent PNG). Since Home Assistant 2026.3, local brand images in a `brand/` folder are served via the brands proxy API and take priority over the brands CDN, so no pull request to the `home-assistant/brands` repository is required, and no `manifest.json` change is needed. There is no separate `logo` or `dark_` variant — the single icon reads well on both light and dark backgrounds. The folder is included in the release ZIP automatically.
+
 ### 6.7 File Structure
 
 ```
@@ -311,6 +313,7 @@ Busch_Radio_iNet/
 │       ├── media_player.py        # Media player entity
 │       ├── sensor.py              # Energy-mode (UDP) + diagnostic HTTP sensors
 │       ├── number.py / select.py / switch.py / time.py / button.py  # HTTP settings entities
+│       ├── brand/                # Local brand images (icon.png, icon@2x.png) — HA 2026.3+
 │       ├── manifest.json
 │       ├── strings.json
 │       └── translations/
@@ -366,6 +369,7 @@ The release process follows the central `RELEASE_GUIDE.md` (HACS ZIP release, ve
 
 | Doc Version | Date | Changes |
 |-------------|------|---------|
+| 1.1.0 | June 2026 | Added §6.6 note on local brand images (`brand/` folder, HA 2026.3 brands proxy API); updated file structure |
 | 1.0.0 | June 2026 | Initial technical reference — communication architecture, push coordinator, ICY strategies, artwork concurrency & sources, HTTP settings Read-Modify-Write, entity catalogue |
 
 > **Doc version ≠ integration version.** This document is versioned independently of `manifest.json`.
