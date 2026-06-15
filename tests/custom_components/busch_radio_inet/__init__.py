@@ -71,6 +71,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     client = BuschRadioUDPClient(host, port)
     coordinator = BuschRadioCoordinator(hass, client, host)
 
+    # Reachability probe for the fallback poll (independent of expose_http_settings).
+    coordinator.set_reachability_client(HttpSettingsClient(hass, host))
+
     shared_listener.register(
         host,
         on_packet=coordinator.handle_packet,

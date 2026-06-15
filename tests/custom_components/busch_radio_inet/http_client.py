@@ -10,6 +10,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 _LOGGER = logging.getLogger(__name__)
 
 _REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=8)
+_REACHABILITY_TIMEOUT = aiohttp.ClientTimeout(total=5)
 
 
 def parse_radio_cfg(text: str) -> dict[str, str]:
@@ -58,6 +59,21 @@ class HttpSettingsClient:
             resp.raise_for_status()
             text = await resp.text(encoding="latin-1")
         return parse_radio_cfg(text)
+
+    async def async_is_reachable(self) -> bool:
+        """Return True if the device answers an HTTP GET within a short timeout.
+
+        Used by the fallback poll to detect when the radio goes offline. UDP is
+        fire-and-forget and cannot confirm reachability, so a quick HTTP GET to
+        /radio.cfg is used as the liveness probe.
+        """
+        try:
+            session = async_get_clientsession(self._hass)
+            url = f"http://{self._host}/radio.cfg"
+            async with session.get(url, timeout=_REACHABILITY_TIMEOUT) as resp:
+                return resp.status == 200
+        except Exception:  # noqa: BLE001 - any error means "not reachable"
+            return False
 
     async def async_post_general(self, fields: dict[str, str]) -> None:
         """POST the managed settings to /<lang>/general.cgi.

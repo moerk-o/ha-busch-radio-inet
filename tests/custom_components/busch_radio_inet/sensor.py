@@ -39,6 +39,10 @@ class BuschRadioEnergyModeSensor(SensorEntity):
         return DeviceInfo(identifiers={(DOMAIN, self._entry.unique_id)})
 
     @property
+    def available(self) -> bool:
+        return self._coordinator.available
+
+    @property
     def native_value(self) -> str | None:
         return self._coordinator.energy_mode
 

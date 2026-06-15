@@ -499,6 +499,13 @@ class TestBuschRadioEnergyModeSensor:
         entity, _ = self._make(None)
         assert entity.native_value is None
 
+    def test_available_follows_coordinator(self):
+        entity, coord = self._make()
+        coord.available = True
+        assert entity.available is True
+        coord.available = False
+        assert entity.available is False
+
     def test_unique_id(self):
         entity, _ = self._make()
         assert entity.unique_id == f"{UNIQUE_ID}_energy_mode"

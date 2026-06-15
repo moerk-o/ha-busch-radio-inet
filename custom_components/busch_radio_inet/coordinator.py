@@ -41,6 +41,9 @@ class BuschRadioCoordinator:
         self.mac_address: str | None = None
         self.energy_mode: str | None = None
 
+        self._reachable: bool = True  # set False when the device stops answering
+        self._reachability_client = None  # set via set_reachability_client()
+
         self._callbacks: list[Callable[[], None]] = []
         self._cancel_poll: Callable | None = None
         self._icy_fetcher = None  # set via set_icy_fetcher()
@@ -56,6 +59,15 @@ class BuschRadioCoordinator:
     def is_ready(self) -> bool:
         """True once we have received at least power state and volume."""
         return self.power is not None and self.volume is not None
+
+    @property
+    def available(self) -> bool:
+        """True when initialised and the device is currently reachable."""
+        return self.is_ready and self._reachable
+
+    def set_reachability_client(self, client) -> None:
+        """Attach the HTTP client used by the fallback poll to verify reachability."""
+        self._reachability_client = client
 
     def register_callback(self, callback: Callable[[], None]) -> None:
         """Register a function to be called on every state change."""
@@ -105,6 +117,9 @@ class BuschRadioCoordinator:
                 fields.get("_parameter", "?"),
             )
             return
+
+        # Any packet means the device is alive – recover from 'unavailable'.
+        self._mark_reachable()
 
         changed = False
 
@@ -341,8 +356,46 @@ class BuschRadioCoordinator:
         for cb in self._callbacks:
             cb()
 
+    # ------------------------------------------------------------------
+    # Reachability
+    # ------------------------------------------------------------------
+
+    def _mark_reachable(self) -> None:
+        """Recover from 'unavailable': mark reachable, notify, resume ICY."""
+        if self._reachable:
+            return
+        _LOGGER.debug("[%s] Device reachable again", self._host)
+        self._reachable = True
+        self._notify_callbacks()
+        self.start_icy_if_playing()
+
+    def _set_unavailable(self) -> None:
+        """Device stopped answering: mark unavailable, stop ICY/artwork, clear now-playing."""
+        if not self._reachable:
+            return
+        _LOGGER.debug("[%s] Device unreachable – marking unavailable", self._host)
+        self._reachable = False
+        if self._icy_fetcher is not None:
+            self._icy_fetcher.stop()
+        self.stop_artwork()
+        self.media_title = None
+        self.media_image_url = None
+        self._notify_callbacks()
+
     async def _async_poll(self, _now=None) -> None:
-        """Periodic fallback poll – keeps state fresh if a notification was lost."""
+        """Periodic fallback poll: verify reachability, then refresh state.
+
+        An HTTP request confirms the device is reachable (UDP is fire-and-forget
+        and cannot). On failure the device is marked unavailable; on success the
+        usual UDP status queries run.
+        """
+        if self._reachability_client is not None:
+            if not await self._reachability_client.async_is_reachable():
+                _LOGGER.debug("[%s] Fallback poll: device not reachable", self._host)
+                self._set_unavailable()
+                return
+            self._mark_reachable()
+
         _LOGGER.debug("[%s] Fallback poll: refreshing device state", self._host)
         await self._client.send_get("POWER_STATUS")
         await self._client.send_get("VOLUME")

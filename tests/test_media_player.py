@@ -42,6 +42,7 @@ def make_coordinator(**kwargs):
     coord.sw_version = kwargs.get("sw_version", "03.12")
     coord.serial_number = kwargs.get("serial_number", "78C40E33745C")
     coord.mac_address = kwargs.get("mac_address", None)
+    coord.available = kwargs.get("available", True)
     coord.is_ready = kwargs.get("is_ready", True)
     coord.media_title = kwargs.get("media_title", None)
     coord.media_image_url = kwargs.get("media_image_url", None)
@@ -97,13 +98,13 @@ def test_supported_features_excludes_play_pause():
 # ===========================================================================
 
 
-def test_available_when_coordinator_is_ready():
-    player, _, _ = make_player(is_ready=True)
+def test_available_when_coordinator_available():
+    player, _, _ = make_player(available=True)
     assert player.available is True
 
 
-def test_not_available_when_coordinator_not_ready():
-    player, _, _ = make_player(is_ready=False)
+def test_not_available_when_coordinator_unavailable():
+    player, _, _ = make_player(available=False)
     assert player.available is False
 
 

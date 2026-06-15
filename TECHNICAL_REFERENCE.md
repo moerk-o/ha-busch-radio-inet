@@ -1,6 +1,6 @@
 # Technical Reference: Home Assistant Integration `busch_radio_inet`
 
-**Version:** 1.4.0
+**Version:** 1.5.0
 **Date:** June 2026
 **Target Platform:** Home Assistant Custom Integration
 **Development Language:** English (code, comments, variables)
@@ -109,7 +109,7 @@ The `BuschRadioUDPClient` (`udp_client.py`) is send-only: it opens a datagram en
 
 **Consequences:** Two different coordinator styles coexist (push for media, polling for HTTP settings — see §3.4 and §6.4). Entities must register/unregister their callback in `async_added_to_hass` / `async_will_remove_from_hass`.
 
-**Readiness / availability:** `is_ready` becomes true once both power and volume have been received. The media_player is `unavailable` until then and maps state to `OFF` / `IDLE` (powered, no station) / `PLAYING` (station active).
+**Readiness / availability:** `is_ready` becomes true once both power and volume have been received. Entities are `available` only when `is_ready` **and** the device is reachable (`available = is_ready and self._reachable`). Reachability is verified in the fallback poll via a short HTTP GET to `/radio.cfg` (independent of the HTTP-settings feature, so it works even when those entities are disabled): a failed probe marks the device `unavailable`, stops the ICY stream and clears now-playing. The device recovers automatically on the next successful poll **or** as soon as any UDP packet arrives (`_mark_reachable()` in `handle_packet`). State maps to `OFF` / `IDLE` (powered, no station) / `PLAYING` (station active).
 
 ### 3.2 ICY Now-Playing Metadata
 
@@ -376,6 +376,7 @@ The release process follows the central `RELEASE_GUIDE.md` (HACS ZIP release, ve
 
 | Doc Version | Date | Changes |
 |-------------|------|---------|
+| 1.5.0 | June 2026 | §3.1: availability/reachability — fallback poll now probes the device via HTTP, marks it unavailable when offline and recovers automatically (Issue #3) |
 | 1.4.0 | June 2026 | §6.4 rewritten: settings write now mirrors the device form — managed-field allowlist + `save=Save` + language path (writes never persisted before, the `save` field was missing) |
 | 1.3.0 | June 2026 | §6.4: stopped stripping `sw`/`sp` from the POST (interim step, superseded by 1.4.0) |
 | 1.2.1 | June 2026 | Clarified `sw`/`sp` diagnostic sensors: meaning unconfirmed, raw value shown (no mapping), disabled by default |
