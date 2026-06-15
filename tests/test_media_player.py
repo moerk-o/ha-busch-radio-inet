@@ -8,6 +8,7 @@ from homeassistant.components.media_player import (
     MediaPlayerState,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
 
 from custom_components.busch_radio_inet.coordinator import BuschRadioCoordinator
 from custom_components.busch_radio_inet.media_player import (
@@ -40,6 +41,9 @@ def make_coordinator(**kwargs):
     coord.station_list = kwargs.get("station_list", [])
     coord.sw_version = kwargs.get("sw_version", "03.12")
     coord.serial_number = kwargs.get("serial_number", "78C40E33745C")
+    coord.mac_address = kwargs.get("mac_address", None)
+    coord.available = kwargs.get("available", True)
+    coord.input_source = kwargs.get("input_source", None)
     coord.is_ready = kwargs.get("is_ready", True)
     coord.media_title = kwargs.get("media_title", None)
     coord.media_image_url = kwargs.get("media_image_url", None)
@@ -95,13 +99,13 @@ def test_supported_features_excludes_play_pause():
 # ===========================================================================
 
 
-def test_available_when_coordinator_is_ready():
-    player, _, _ = make_player(is_ready=True)
+def test_available_when_coordinator_available():
+    player, _, _ = make_player(available=True)
     assert player.available is True
 
 
-def test_not_available_when_coordinator_not_ready():
-    player, _, _ = make_player(is_ready=False)
+def test_not_available_when_coordinator_unavailable():
+    player, _, _ = make_player(available=False)
     assert player.available is False
 
 
@@ -117,6 +121,11 @@ def test_state_idle_when_power_true_no_station():
 
 def test_state_playing_when_power_true_with_station():
     player, _, _ = make_player(power=True, station_name="NDR 90.3", is_ready=True)
+    assert player.state == MediaPlayerState.PLAYING
+
+
+def test_state_playing_with_input_source_no_station():
+    player, _, _ = make_player(power=True, is_ready=True, input_source="UPnP")
     assert player.state == MediaPlayerState.PLAYING
 
 
@@ -178,14 +187,20 @@ def test_source_none_when_not_playing():
     assert player.source is None
 
 
-def test_source_list_returns_names():
+def test_source_returns_input_source_when_set():
+    # An active input source (UPnP/AUX) takes precedence over the station name.
+    player, _, _ = make_player(station_name="NDR 90.3", input_source="UPnP")
+    assert player.source == "UPnP"
+
+
+def test_source_list_returns_names_plus_input_sources():
     player, _, _ = make_player(station_list=STATION_LIST)
-    assert player.source_list == ["WDR 2", "NDR 90.3", "Rock Radio"]
+    assert player.source_list == ["WDR 2", "NDR 90.3", "Rock Radio", "UPnP", "AUX"]
 
 
-def test_source_list_empty_when_no_stations():
+def test_source_list_only_input_sources_when_no_stations():
     player, _, _ = make_player(station_list=[])
-    assert player.source_list == []
+    assert player.source_list == ["UPnP", "AUX"]
 
 
 def test_media_title_returns_station_name():
@@ -228,6 +243,30 @@ def test_device_info_contains_sw_version():
     coord.sw_version = "03.12"
     info = player.device_info
     assert info["sw_version"] == "03.12"
+
+
+def test_device_info_contains_serial_number():
+    player, _, _ = make_player(serial_number="78C40E33745C")
+    info = player.device_info
+    assert info["serial_number"] == "78C40E33745C"
+
+
+def test_device_info_contains_configuration_url():
+    player, _, _ = make_player()
+    info = player.device_info
+    assert info["configuration_url"] == "http://192.168.1.179"
+
+
+def test_device_info_contains_mac_connection():
+    player, _, _ = make_player(mac_address="78:C4:0E:33:74:5C")
+    info = player.device_info
+    assert (CONNECTION_NETWORK_MAC, "78:c4:0e:33:74:5c") in info["connections"]
+
+
+def test_device_info_no_connections_without_mac():
+    player, _, _ = make_player(mac_address=None)
+    info = player.device_info
+    assert "connections" not in info
 
 
 # ===========================================================================
@@ -353,6 +392,18 @@ async def test_select_source_empty_station_list_does_not_crash():
     player, _, client = make_player(station_list=[])
     await player.async_select_source("WDR 2")
     client.send_play.assert_not_called()
+
+
+async def test_select_source_upnp_sends_play_upnp():
+    player, _, client = make_player(station_list=STATION_LIST)
+    await player.async_select_source("UPnP")
+    client.send_play.assert_called_once_with("UPNP")
+
+
+async def test_select_source_aux_sends_play_aux():
+    player, _, client = make_player(station_list=STATION_LIST)
+    await player.async_select_source("AUX")
+    client.send_play.assert_called_once_with("AUX")
 
 
 # ===========================================================================
@@ -603,3 +654,129 @@ async def test_unloading_both_devices_stops_listener(
         await hass.async_block_till_done()
 
     mock_listener.stop.assert_called_once()
+
+
+# ===========================================================================
+# media_artist (parsed from ICY StreamTitle)
+# ===========================================================================
+
+
+def test_media_artist_dash_format():
+    player, _, _ = make_player(media_title="Queen - Bohemian Rhapsody")
+    assert player.media_artist == "Queen"
+
+
+def test_media_artist_slash_format():
+    player, _, _ = make_player(media_title="Bohemian Rhapsody / Queen")
+    assert player.media_artist == "Queen"
+
+
+def test_media_artist_none_without_separator():
+    player, _, _ = make_player(media_title="Just A Plain Title")
+    assert player.media_artist is None
+
+
+def test_media_artist_none_when_ambiguous():
+    player, _, _ = make_player(media_title="A - B / C")
+    assert player.media_artist is None
+
+
+def test_media_artist_none_when_no_title():
+    player, _, _ = make_player(media_title=None)
+    assert player.media_artist is None
+
+
+# ===========================================================================
+# Setup with HTTP settings + ICY enabled (covers __init__ option branches and
+# all HTTP entity platform setups)
+# ===========================================================================
+
+
+_FULL_HTTP_CONFIG = {
+    "bb": "80", "co": "60", "tz": "1", "st": "30", "ss": "60",
+    "bl": "2", "dm": "0", "ms": "1", "sm": "0", "ln": "de", "zs": "0",
+    "aw": "", "sz": "1", "ea": "1", "et": "", "es": "",
+    "hr": "14", "mi": "30", "ah": "7", "am": "0",
+    "sw": "0", "sp": "1",
+}
+
+
+@pytest.mark.parametrize("icy_mode", ["live", "interval"])
+async def test_setup_with_http_and_icy(
+    hass: HomeAssistant, config_entry_data, device_serial, icy_mode
+) -> None:
+    """Setup with expose_http_settings + ICY creates all settings entities."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    entry = MockConfigEntry(
+        domain="busch_radio_inet",
+        data=config_entry_data,
+        options={
+            "expose_http_settings": True,
+            "http_poll_interval": 5,
+            "icy_enabled": True,
+            "icy_mode": icy_mode,
+            "icy_interval": 60,
+        },
+        unique_id=device_serial,
+        version=1,
+    )
+
+    with patch(
+        "custom_components.busch_radio_inet.SharedUDPListener"
+    ) as mock_listener_cls, patch(
+        "custom_components.busch_radio_inet.BuschRadioUDPClient"
+    ) as mock_client_cls, patch(
+        "custom_components.busch_radio_inet.coordinator.async_track_time_interval",
+        return_value=MagicMock(),
+    ), patch(
+        "custom_components.busch_radio_inet.ArtworkClient"
+    ), patch(
+        "custom_components.busch_radio_inet.async_call_later",
+        return_value=MagicMock(),
+    ), patch(
+        "custom_components.busch_radio_inet.HttpSettingsClient"
+    ) as mock_http_cls:
+        mock_listener = MagicMock()
+        mock_listener.start = AsyncMock()
+        mock_listener.stop = MagicMock()
+        mock_listener.has_devices = False
+        mock_listener_cls.return_value = mock_listener
+
+        mock_client = MagicMock()
+        mock_client.send_get = AsyncMock()
+        mock_client_cls.return_value = mock_client
+
+        mock_http = MagicMock()
+        mock_http.async_get_config = AsyncMock(return_value=dict(_FULL_HTTP_CONFIG))
+        mock_http_cls.return_value = mock_http
+
+        entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        # All HTTP settings platforms loaded
+        assert hass.states.async_all("number")
+        assert hass.states.async_all("select")
+        assert hass.states.async_all("switch")
+        assert hass.states.async_all("time")
+        assert hass.states.async_all("button")
+        assert hass.states.async_all("sensor")
+
+        # Clean unload (also stops the HTTP coordinator's update timer)
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_async_reload_entry_triggers_reload() -> None:
+    """async_reload_entry delegates to config_entries.async_reload."""
+    from custom_components.busch_radio_inet import async_reload_entry
+
+    hass = MagicMock()
+    hass.config_entries.async_reload = AsyncMock()
+    entry = MagicMock()
+    entry.entry_id = "abc123"
+
+    await async_reload_entry(hass, entry)
+
+    hass.config_entries.async_reload.assert_awaited_once_with("abc123")

@@ -58,6 +58,7 @@ song or station. No account or API key is needed.
 
 ## Requirements
 
+- Home Assistant **2026.3** or newer
 - Busch-Jäger **Busch-Radio iNet** (obviously)
 - UDP port **4242** available on the HA host (listen port)
 - The radio's device port **4244** reachable from HA
@@ -116,8 +117,38 @@ The main entity for controlling the radio.
 - `media_title` – Song title from the stream, or station name if no song info is available
 - `media_artist` – Artist name, parsed from the stream's `"Artist - Title"` format
 - `media_image_url` – Album cover for the current song, or the station's logo
-- `source` – Currently playing station name
-- `source_list` – All configured stations
+- `source` – Currently playing station, or `UPnP` / `AUX` when an input source is active
+- `source_list` – The configured stations plus `UPnP` and `AUX`
+
+#### Streaming to the radio (UPnP)
+
+Selecting the **`UPnP`** source switches the radio into UPnP renderer mode. The
+radio then appears as a DLNA renderer on the network, and Home Assistant's own
+**DLNA DMR** integration can stream media or send TTS to it. Selecting a station
+(or `AUX`) again leaves UPnP mode. This integration only switches the source —
+the actual streaming is handled by Home Assistant's DLNA support.
+
+---
+
+### Station Presets (`sensor.{name}_station_presets`)
+
+A read-only sensor that exposes the radio's 8 station preset slots, handy for
+building a custom dashboard card.
+
+- **State:** number of occupied presets (e.g. `6`)
+- **Attributes:** `1_name` / `1_url` … `8_name` / `8_url` — one pair per slot;
+  empty slots have empty strings.
+
+Example (Markdown card):
+
+```jinja
+{% for slot in range(1, 9) %}
+{% set name = state_attr('sensor.busch_radio_inet_station_presets', slot ~ '_name') %}
+{% if name %}- **{{ slot }}**: {{ name }}{% endif %}
+{% endfor %}
+```
+
+Writing/editing presets is not supported.
 
 ---
 
@@ -168,8 +199,8 @@ are fetched from the radio over the local network and written back when changed.
 | Entity | Values | Description |
 |--------|--------|-------------|
 | `sensor.{name}_energy_mode` | `PREMIUM` / `ECO` | Current energy mode |
-| `sensor.{name}_switch_input` | `Switch` / `Button` / `Automatic` | External switch input function |
-| `sensor.{name}_mains_voltage` | `110V` / `230V` | Configured mains voltage |
+| `sensor.{name}_switch_input` | raw value | Raw `sw` field from the device — meaning unconfirmed, **disabled by default** |
+| `sensor.{name}_mains_voltage` | raw value | Raw `sp` field from the device — meaning unconfirmed, **disabled by default** |
 | `button.{name}_refresh_settings` | – | Force re-read of all device settings from the radio |
 
 ## Troubleshooting
@@ -182,8 +213,10 @@ are fetched from the radio over the local network and written back when changed.
 
 ### Entity shows `unavailable`
 
-The integration becomes unavailable if the radio does not respond at startup. Reload the
-integration after fixing network connectivity.
+The integration marks the device **unavailable** when it stops responding — powered off at
+the socket, network outage, or a device crash. Reachability is re-checked at least every
+5 minutes, and the device **recovers automatically** once it is back online (no reload
+needed). At startup the entities stay `unavailable` until the radio first responds.
 
 ### Song/artist info not updating
 
@@ -198,6 +231,8 @@ Enable **Expose device settings as HA entities** in the integration options and 
 ## Contributing
 
 This project is open source and contributions are warmly welcomed! Issues for bugs or feature requests are just as appreciated as pull requests for code improvements.
+
+For a deep dive into the internal design (UDP protocol, state coordinator, ICY metadata, artwork lookup, HTTP settings), see the [Technical Reference](TECHNICAL_REFERENCE.md).
 
 ## License
 

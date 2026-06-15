@@ -42,8 +42,11 @@ from .udp_listener import SharedUDPListener
 
 _LOGGER = logging.getLogger(__name__)
 
-ALWAYS_PLATFORMS = ["media_player"]
-HTTP_PLATFORMS = ["number", "select", "switch", "time", "button", "sensor"]
+# media_player + sensor are UDP-based and always loaded. The sensor platform
+# adds the station-presets sensor (always) and the HTTP diagnostic sensors only
+# when expose_http_settings is on (see sensor.py).
+ALWAYS_PLATFORMS = ["media_player", "sensor"]
+HTTP_PLATFORMS = ["number", "select", "switch", "time", "button"]
 
 _SHARED_LISTENER_KEY = "shared_listener"
 
@@ -70,6 +73,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     client = BuschRadioUDPClient(host, port)
     coordinator = BuschRadioCoordinator(hass, client, host)
+
+    # Reachability probe for the fallback poll (independent of expose_http_settings).
+    coordinator.set_reachability_client(HttpSettingsClient(hass, host))
 
     shared_listener.register(
         host,

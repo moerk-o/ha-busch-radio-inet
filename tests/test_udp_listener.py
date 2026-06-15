@@ -475,3 +475,53 @@ async def test_protocol_connection_lost_with_exc_does_not_raise():
 async def test_protocol_connection_lost_without_exc_does_not_raise():
     protocol = _UDPProtocol(MagicMock())
     protocol.connection_lost(None)
+
+
+def test_parse_packet_invalid_channel_number_is_skipped():
+    """A non-numeric CHANNEL value is logged and skipped, not crashing the parse."""
+    msg = (
+        "COMMAND:GET\r\nALL_STATION_INFO\r\nID:HA\r\n"
+        "CHANNEL:abc\r\nNAME:Bad Station\r\nURL:http://x\r\nRESPONSE:ACK\r\n"
+    )
+    fields = parse_packet(msg)
+    assert fields["_stations"] == []
+
+
+def test_protocol_connection_made_does_not_raise():
+    protocol = _UDPProtocol(MagicMock())
+    protocol.connection_made(MagicMock())  # logs debug; must not raise
+
+
+def test_protocol_datagram_received_valid_forwards_message():
+    handler = MagicMock()
+    protocol = _UDPProtocol(handler)
+    protocol.datagram_received(
+        b"COMMAND:GET\r\nPOWER:ON\r\n", ("192.168.1.10", 4242)
+    )
+    handler.assert_called_once()
+    message, addr = handler.call_args[0]
+    assert message.startswith("COMMAND:GET")
+    assert addr == ("192.168.1.10", 4242)
+
+
+async def test_start_retries_then_raises_on_persistent_oserror():
+    """start() retries the bind on OSError and finally re-raises the last error."""
+    listener = make_listener()
+    mock_sock = MagicMock()
+    mock_sock.bind.side_effect = OSError("address already in use")
+    mock_loop = MagicMock()
+
+    with patch(
+        "custom_components.busch_radio_inet.udp_listener.asyncio.get_running_loop",
+        return_value=mock_loop,
+    ), patch(
+        "custom_components.busch_radio_inet.udp_listener._socket.socket",
+        return_value=mock_sock,
+    ), patch(
+        "custom_components.busch_radio_inet.udp_listener.asyncio.sleep",
+        new=AsyncMock(),
+    ):
+        with pytest.raises(OSError, match="address already in use"):
+            await listener.start()
+
+    assert mock_sock.bind.call_count == 5

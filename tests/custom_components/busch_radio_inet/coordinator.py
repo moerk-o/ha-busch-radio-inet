@@ -33,12 +33,17 @@ class BuschRadioCoordinator:
         self.station_id: int | None = None
         self.station_name: str | None = None
         self.station_list: list[dict] = []   # [{'id', 'name', 'url'}, …]
+        self.input_source: str | None = None  # "UPnP"/"AUX" when active, else None (station mode)
         self.media_title: str | None = None  # ICY StreamTitle (None = use station_name)
         self.media_image_url: str | None = None  # artwork URL (Tier 1 or Tier 2)
         self.device_name: str | None = None
         self.sw_version: str | None = None
         self.serial_number: str | None = None
+        self.mac_address: str | None = None
         self.energy_mode: str | None = None
+
+        self._reachable: bool = True  # set False when the device stops answering
+        self._reachability_client = None  # set via set_reachability_client()
 
         self._callbacks: list[Callable[[], None]] = []
         self._cancel_poll: Callable | None = None
@@ -55,6 +60,15 @@ class BuschRadioCoordinator:
     def is_ready(self) -> bool:
         """True once we have received at least power state and volume."""
         return self.power is not None and self.volume is not None
+
+    @property
+    def available(self) -> bool:
+        """True when initialised and the device is currently reachable."""
+        return self.is_ready and self._reachable
+
+    def set_reachability_client(self, client) -> None:
+        """Attach the HTTP client used by the fallback poll to verify reachability."""
+        self._reachability_client = client
 
     def register_callback(self, callback: Callable[[], None]) -> None:
         """Register a function to be called on every state change."""
@@ -105,6 +119,9 @@ class BuschRadioCoordinator:
             )
             return
 
+        # Any packet means the device is alive – recover from 'unavailable'.
+        self._mark_reachable()
+
         changed = False
 
         # --- Power state + energy mode (from GET POWER_STATUS) ---
@@ -141,12 +158,18 @@ class BuschRadioCoordinator:
             except (ValueError, TypeError):
                 _LOGGER.warning("[%s] Invalid VOLUME_SET value: %s", self._host, fields["VOLUME_SET"])
 
-        # --- Playing mode: active ---
-        if fields.get("PLAYING") == "STATION":
+        # --- Playing mode: station ---
+        playing = fields.get("PLAYING")
+        if playing == "STATION":
             try:
                 sid = int(fields.get("ID", 0))
                 name = fields.get("NAME", "")
-                if self.station_id != sid or self.station_name != name:
+                if (
+                    self.station_id != sid
+                    or self.station_name != name
+                    or self.input_source is not None
+                ):
+                    self.input_source = None
                     self.station_id = sid
                     self.station_name = name
                     self.media_image_url = None  # clear immediately; callback follows
@@ -155,9 +178,23 @@ class BuschRadioCoordinator:
             except (ValueError, TypeError):
                 _LOGGER.warning("[%s] Invalid station ID: %s", self._host, fields.get("ID"))
 
+        # --- Playing mode: input source (UPnP / AUX) ---
+        # Device reports "PLAYING:UPNP" and "PLAYING:AUX_IDCOCK" / "AUX/IDOCK".
+        elif playing == "UPNP" and self.input_source != "UPnP":
+            self._enter_input_source("UPnP")
+            changed = True
+        elif playing and playing.startswith("AUX") and self.input_source != "AUX":
+            self._enter_input_source("AUX")
+            changed = True
+
         # --- Playing mode: stopped ---
         if fields.get("MODE") == "PLAYING STOPPED":
-            if self.station_id is not None or self.station_name is not None:
+            if (
+                self.station_id is not None
+                or self.station_name is not None
+                or self.input_source is not None
+            ):
+                self.input_source = None
                 self.station_id = None
                 self.station_name = None
                 changed = True
@@ -174,6 +211,7 @@ class BuschRadioCoordinator:
             self.serial_number = fields.get("SERNO")
             self.sw_version = fields.get("SW-VERSION")
             self.device_name = fields.get("NAME")
+            self.mac_address = fields.get("MAC")
             changed = True
 
         if changed:
@@ -228,6 +266,18 @@ class BuschRadioCoordinator:
         if self._artwork_task is not None:
             self._artwork_task.cancel()
             self._artwork_task = None
+
+    def _enter_input_source(self, name: str) -> None:
+        """Switch to a non-station source (UPnP/AUX): clear station + now-playing, stop ICY."""
+        _LOGGER.debug("[%s] Input source: %s", self._host, name)
+        self.input_source = name
+        self.station_id = None
+        self.station_name = None
+        self.media_title = None
+        self.media_image_url = None
+        if self._icy_fetcher is not None:
+            self._icy_fetcher.stop()
+        self.stop_artwork()
 
     def _on_station_changed(self) -> None:
         """Station is changing – stop ICY fetch, cancel artwork, clear stale title."""
@@ -339,8 +389,46 @@ class BuschRadioCoordinator:
         for cb in self._callbacks:
             cb()
 
+    # ------------------------------------------------------------------
+    # Reachability
+    # ------------------------------------------------------------------
+
+    def _mark_reachable(self) -> None:
+        """Recover from 'unavailable': mark reachable, notify, resume ICY."""
+        if self._reachable:
+            return
+        _LOGGER.debug("[%s] Device reachable again", self._host)
+        self._reachable = True
+        self._notify_callbacks()
+        self.start_icy_if_playing()
+
+    def _set_unavailable(self) -> None:
+        """Device stopped answering: mark unavailable, stop ICY/artwork, clear now-playing."""
+        if not self._reachable:
+            return
+        _LOGGER.debug("[%s] Device unreachable – marking unavailable", self._host)
+        self._reachable = False
+        if self._icy_fetcher is not None:
+            self._icy_fetcher.stop()
+        self.stop_artwork()
+        self.media_title = None
+        self.media_image_url = None
+        self._notify_callbacks()
+
     async def _async_poll(self, _now=None) -> None:
-        """Periodic fallback poll – keeps state fresh if a notification was lost."""
+        """Periodic fallback poll: verify reachability, then refresh state.
+
+        An HTTP request confirms the device is reachable (UDP is fire-and-forget
+        and cannot). On failure the device is marked unavailable; on success the
+        usual UDP status queries run.
+        """
+        if self._reachability_client is not None:
+            if not await self._reachability_client.async_is_reachable():
+                _LOGGER.debug("[%s] Fallback poll: device not reachable", self._host)
+                self._set_unavailable()
+                return
+            self._mark_reachable()
+
         _LOGGER.debug("[%s] Fallback poll: refreshing device state", self._host)
         await self._client.send_get("POWER_STATUS")
         await self._client.send_get("VOLUME")

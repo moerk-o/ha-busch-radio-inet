@@ -499,6 +499,13 @@ class TestBuschRadioEnergyModeSensor:
         entity, _ = self._make(None)
         assert entity.native_value is None
 
+    def test_available_follows_coordinator(self):
+        entity, coord = self._make()
+        coord.available = True
+        assert entity.available is True
+        coord.available = False
+        assert entity.available is False
+
     def test_unique_id(self):
         entity, _ = self._make()
         assert entity.unique_id == f"{UNIQUE_ID}_energy_mode"
@@ -519,29 +526,26 @@ class TestBuschRadioEnergyModeSensor:
 class TestSwitchInputSensor:
     def _make(self, data=_UNSET):
         from custom_components.busch_radio_inet.sensor import SwitchInputSensor
-        coord = make_http_coordinator({"sw": "0"} if data is _UNSET else data)
+        coord = make_http_coordinator({"sw": "4"} if data is _UNSET else data)
         entry = make_entry()
         return SwitchInputSensor(coord, entry), coord
 
-    def test_native_value_switch(self):
+    def test_native_value_is_raw(self):
+        # No value mapping is applied — the raw device value is shown as-is.
+        entity, _ = self._make({"sw": "4"})
+        assert entity.native_value == "4"
+
+    def test_native_value_passthrough_zero(self):
         entity, _ = self._make({"sw": "0"})
-        assert entity.native_value == "Switch"
-
-    def test_native_value_button(self):
-        entity, _ = self._make({"sw": "1"})
-        assert entity.native_value == "Button"
-
-    def test_native_value_automatic(self):
-        entity, _ = self._make({"sw": "2"})
-        assert entity.native_value == "Automatic"
-
-    def test_native_value_raw_when_unknown(self):
-        entity, _ = self._make({"sw": "99"})
-        assert entity.native_value == "99"
+        assert entity.native_value == "0"
 
     def test_native_value_none_when_missing(self):
         entity, _ = self._make({})
         assert entity.native_value is None
+
+    def test_disabled_by_default(self):
+        entity, _ = self._make()
+        assert entity.entity_registry_enabled_default is False
 
     def test_unavailable_when_data_none(self):
         from custom_components.busch_radio_inet.sensor import SwitchInputSensor
@@ -555,14 +559,75 @@ class TestSwitchInputSensor:
 class TestMainsVoltageSensor:
     def _make(self, data=_UNSET):
         from custom_components.busch_radio_inet.sensor import MainsVoltageSensor
-        coord = make_http_coordinator({"sp": "1"} if data is _UNSET else data)
+        coord = make_http_coordinator({"sp": "4"} if data is _UNSET else data)
         entry = make_entry()
         return MainsVoltageSensor(coord, entry), coord
 
-    def test_native_value_230v(self):
-        entity, _ = self._make({"sp": "1"})
-        assert entity.native_value == "230V"
+    def test_native_value_is_raw(self):
+        entity, _ = self._make({"sp": "4"})
+        assert entity.native_value == "4"
 
-    def test_native_value_110v(self):
+    def test_native_value_passthrough_zero(self):
         entity, _ = self._make({"sp": "0"})
-        assert entity.native_value == "110V"
+        assert entity.native_value == "0"
+
+    def test_disabled_by_default(self):
+        entity, _ = self._make()
+        assert entity.entity_registry_enabled_default is False
+
+
+class TestBuschRadioStationPresetsSensor:
+    def _make(self, station_list):
+        from custom_components.busch_radio_inet.sensor import BuschRadioStationPresetsSensor
+        coord = MagicMock()
+        coord.station_list = station_list
+        coord.available = True
+        coord.register_callback = MagicMock()
+        coord.unregister_callback = MagicMock()
+        entry = make_entry()
+        entity = BuschRadioStationPresetsSensor(coord, entry)
+        entity.async_write_ha_state = MagicMock()
+        return entity, coord
+
+    def test_native_value_counts_occupied_presets(self):
+        entity, _ = self._make([
+            {"id": 1, "name": "WDR 2", "url": "u1"},
+            {"id": 2, "name": "NDR 90.3", "url": "u2"},
+        ])
+        assert entity.native_value == 2
+
+    def test_attributes_cover_all_eight_slots(self):
+        entity, _ = self._make([
+            {"id": 1, "name": "WDR 2", "url": "u1"},
+            {"id": 4, "name": "Relax", "url": "u4"},
+        ])
+        attrs = entity.extra_state_attributes
+        assert attrs["1_name"] == "WDR 2"
+        assert attrs["1_url"] == "u1"
+        assert attrs["4_name"] == "Relax"
+        # empty slots are present with empty strings
+        assert attrs["2_name"] == ""
+        assert attrs["8_url"] == ""
+        assert sum(1 for k in attrs if k.endswith("_name")) == 8
+        assert sum(1 for k in attrs if k.endswith("_url")) == 8
+
+    def test_unique_id(self):
+        entity, _ = self._make([])
+        assert entity.unique_id == f"{UNIQUE_ID}_station_presets"
+
+    def test_available_follows_coordinator(self):
+        entity, coord = self._make([])
+        coord.available = False
+        assert entity.available is False
+
+    @pytest.mark.asyncio
+    async def test_added_registers_callback(self):
+        entity, coord = self._make([])
+        await entity.async_added_to_hass()
+        coord.register_callback.assert_called_once_with(entity.async_write_ha_state)
+
+    @pytest.mark.asyncio
+    async def test_will_remove_unregisters_callback(self):
+        entity, coord = self._make([])
+        await entity.async_will_remove_from_hass()
+        coord.unregister_callback.assert_called_once_with(entity.async_write_ha_state)

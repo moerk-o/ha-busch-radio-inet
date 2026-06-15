@@ -10,10 +10,15 @@ from homeassistant.components.media_player import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import (
+    CONNECTION_NETWORK_MAC,
+    DeviceInfo,
+    format_mac,
+)
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
+    CONF_HOST,
     CONF_NAME,
     DOMAIN,
     MANUFACTURER,
@@ -31,6 +36,10 @@ SUPPORTED_FEATURES = (
     | MediaPlayerEntityFeature.VOLUME_MUTE
     | MediaPlayerEntityFeature.SELECT_SOURCE
 )
+
+# Non-station input sources: HA source name -> PLAY parameter.
+INPUT_SOURCE_COMMANDS = {"UPnP": "UPNP", "AUX": "AUX"}
+INPUT_SOURCES = list(INPUT_SOURCE_COMMANDS)
 
 
 async def async_setup_entry(
@@ -80,13 +89,20 @@ class BuschRadioMediaPlayer(MediaPlayerEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
+        info = DeviceInfo(
             identifiers={(DOMAIN, self._entry.unique_id)},
             name=self._entry.data[CONF_NAME],
             manufacturer=MANUFACTURER,
             model=MODEL,
             sw_version=self._coordinator.sw_version,
+            serial_number=self._coordinator.serial_number,
+            configuration_url=f"http://{self._entry.data[CONF_HOST]}",
         )
+        if self._coordinator.mac_address:
+            info["connections"] = {
+                (CONNECTION_NETWORK_MAC, format_mac(self._coordinator.mac_address))
+            }
+        return info
 
     # ------------------------------------------------------------------
     # Availability
@@ -94,8 +110,8 @@ class BuschRadioMediaPlayer(MediaPlayerEntity):
 
     @property
     def available(self) -> bool:
-        """Entity is available once we have received power and volume state."""
-        return self._coordinator.is_ready
+        """Available once initialised and while the device stays reachable."""
+        return self._coordinator.available
 
     # ------------------------------------------------------------------
     # State
@@ -107,7 +123,7 @@ class BuschRadioMediaPlayer(MediaPlayerEntity):
             return None
         if not self._coordinator.power:
             return MediaPlayerState.OFF
-        if self._coordinator.station_name:
+        if self._coordinator.station_name or self._coordinator.input_source:
             return MediaPlayerState.PLAYING
         return MediaPlayerState.IDLE
 
@@ -131,11 +147,11 @@ class BuschRadioMediaPlayer(MediaPlayerEntity):
 
     @property
     def source(self) -> str | None:
-        return self._coordinator.station_name
+        return self._coordinator.input_source or self._coordinator.station_name
 
     @property
     def source_list(self) -> list[str]:
-        return [s["name"] for s in self._coordinator.station_list]
+        return [s["name"] for s in self._coordinator.station_list] + INPUT_SOURCES
 
     # ------------------------------------------------------------------
     # Media title / artist
@@ -195,7 +211,10 @@ class BuschRadioMediaPlayer(MediaPlayerEntity):
         self._coordinator.set_muted(mute)
 
     async def async_select_source(self, source: str) -> None:
-        """Select a station by name."""
+        """Select a station by name, or switch to an input source (UPnP/AUX)."""
+        if source in INPUT_SOURCE_COMMANDS:
+            await self._client.send_play(INPUT_SOURCE_COMMANDS[source])
+            return
         for station in self._coordinator.station_list:
             if station["name"] == source:
                 await self._client.send_play(f"STATION:{station['id']}")

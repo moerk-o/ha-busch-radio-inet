@@ -270,6 +270,78 @@ async def test_config_flow_aborts_when_host_already_configured(
     mock_validate.assert_not_called()
 
 
+# ===========================================================================
+# validate_connection – no shared listener, success path
+# ===========================================================================
+
+
+async def test_validate_connection_no_listener_success():
+    """Without a shared listener, a temporary socket is opened and closed again."""
+    hass = _mock_hass_no_listener()
+    mock_transport = MagicMock()
+    mock_loop = MagicMock()
+    mock_loop.create_future.return_value = MagicMock()
+    mock_loop.create_datagram_endpoint = AsyncMock(
+        return_value=(mock_transport, MagicMock())
+    )
+
+    with patch(
+        "custom_components.busch_radio_inet.config_flow.asyncio.get_running_loop",
+        return_value=mock_loop,
+    ), patch(
+        "custom_components.busch_radio_inet.config_flow.BuschRadioUDPClient"
+    ) as mock_client_cls, patch(
+        "custom_components.busch_radio_inet.config_flow.asyncio.wait_for",
+        new=AsyncMock(return_value={"SERNO": "AABBCC112233"}),
+    ):
+        mock_client = MagicMock()
+        mock_client.send_get = AsyncMock()
+        mock_client_cls.return_value = mock_client
+
+        result = await validate_connection(hass, "192.168.1.50", 4244)
+
+    assert result["SERNO"] == "AABBCC112233"
+    mock_transport.close.assert_called_once()
+
+
+# ===========================================================================
+# Options flow
+# ===========================================================================
+
+
+async def test_options_flow_shows_form(hass: HomeAssistant, mock_config_entry):
+    mock_config_entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(mock_config_entry.entry_id)
+    assert result["type"] == "form"
+    assert result["step_id"] == "init"
+
+
+async def test_options_flow_submit_creates_entry(hass: HomeAssistant, mock_config_entry):
+    mock_config_entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(mock_config_entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            "icy_enabled": True,
+            "icy_mode": "interval",
+            "icy_interval": 60,
+            "expose_http_settings": False,
+            "http_poll_interval": 5,
+        },
+    )
+    assert result["type"] == "create_entry"
+
+
+def test_async_get_options_flow_returns_handler():
+    from custom_components.busch_radio_inet.config_flow import (
+        BuschRadioINetConfigFlow,
+        BuschRadioOptionsFlowHandler,
+    )
+
+    handler = BuschRadioINetConfigFlow.async_get_options_flow(MagicMock())
+    assert isinstance(handler, BuschRadioOptionsFlowHandler)
+
+
 def test_suggested_name_first_device():
     assert _suggested_name(0) == DEFAULT_NAME
 

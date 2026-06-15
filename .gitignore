@@ -4,11 +4,19 @@ udp_probe.py
 udp_probe_log.txt
 
 # Symlinks zu zentralen Guides (lokal, nicht Teil des Repos)
+CLAUDE_GUIDE.md
+GIT_WORKFLOW_GUIDE.md
+DOCUMENTATION_GUIDE.md
 RELEASE_GUIDE.md
 TESTING_GUIDE.md
 
+# Claude Code Arbeitsdatei (lokal, nicht im Repo)
+CLAUDE.md
+
 # Interne Projektdokumentation (lokal, nicht im Repo)
 docs/
+konzept.md
+prompt.md
 
 # Python
 __pycache__/
