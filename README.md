@@ -117,8 +117,16 @@ The main entity for controlling the radio.
 - `media_title` – Song title from the stream, or station name if no song info is available
 - `media_artist` – Artist name, parsed from the stream's `"Artist - Title"` format
 - `media_image_url` – Album cover for the current song, or the station's logo
-- `source` – Currently playing station name
-- `source_list` – All configured stations
+- `source` – Currently playing station, or `UPnP` / `AUX` when an input source is active
+- `source_list` – The configured stations plus `UPnP` and `AUX`
+
+#### Streaming to the radio (UPnP)
+
+Selecting the **`UPnP`** source switches the radio into UPnP renderer mode. The
+radio then appears as a DLNA renderer on the network, and Home Assistant's own
+**DLNA DMR** integration can stream media or send TTS to it. Selecting a station
+(or `AUX`) again leaves UPnP mode. This integration only switches the source —
+the actual streaming is handled by Home Assistant's DLNA support.
 
 ---
 

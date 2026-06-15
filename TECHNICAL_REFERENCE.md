@@ -1,6 +1,6 @@
 # Technical Reference: Home Assistant Integration `busch_radio_inet`
 
-**Version:** 1.5.0
+**Version:** 1.6.0
 **Date:** June 2026
 **Target Platform:** Home Assistant Custom Integration
 **Development Language:** English (code, comments, variables)
@@ -167,10 +167,23 @@ All entities of one radio are grouped under a single device (identified by the e
 |---------|----------------|
 | Power | `TURN_ON` / `TURN_OFF` → `SET RADIO_ON` / `RADIO_OFF` |
 | Volume | `VOLUME_SET` (0..1 mapped to raw 0..`MAX_VOLUME`=31), `VOLUME_STEP` (`VOLUME_INC`/`DEC`), `VOLUME_MUTE` |
-| Source | `SELECT_SOURCE` — station name → `PLAY STATION:{id}` |
+| Source | `SELECT_SOURCE` — `source_list` = the 8 stations **+ `UPnP` + `AUX`**. Station → `PLAY STATION:{id}`; `UPnP` → `PLAY UPNP`; `AUX` → `PLAY AUX` |
 | Now playing | `media_title` (ICY title, falling back to station name), `media_artist` (parsed), `media_image_url` |
 
 **Mute** is tracked locally (`set_muted`) because the device has no GET for mute state.
+
+**Input sources (UPnP / AUX):** the active source is *detected*, not assumed — the
+device reports it on `GET PLAYING_MODE` / in `PLAY` acks: `PLAYING:STATION`
+(station), `PLAYING:UPNP` (→ "UPnP"), `PLAYING:AUX*` (→ "AUX"; firmware spells it
+`AUX/IDOCK` / `AUX_IDCOCK`, matched by prefix). So switching the source on the
+device itself is reflected too. Entering UPnP/AUX clears the station + now-playing
+and stops the ICY stream (no stream URL to read).
+
+**UPnP streaming** is *not* handled here: in UPnP mode the radio is a DLNA
+`MediaRenderer` (`http://<host>:80/upnp/device.xml`, `AVTransport`). Home
+Assistant's own DLNA DMR integration streams / TTS to it once the source is set
+to UPnP. `TUNEIN_INIT` exists in the protocol but is not exposed (it only opens
+TuneIn for on-device browsing and then reports `PLAYING STOPPED`).
 
 ### 4.2 Energy Mode Sensor (always present alongside HTTP settings)
 
@@ -376,6 +389,7 @@ The release process follows the central `RELEASE_GUIDE.md` (HACS ZIP release, ve
 
 | Doc Version | Date | Changes |
 |-------------|------|---------|
+| 1.6.0 | June 2026 | §4.1: UPnP/AUX input sources — selectable in `source_list`, active source detected from `PLAYING:UPNP`/`AUX`; UPnP streaming via HA DLNA (Issue #5) |
 | 1.5.0 | June 2026 | §3.1: availability/reachability — fallback poll now probes the device via HTTP, marks it unavailable when offline and recovers automatically (Issue #3) |
 | 1.4.0 | June 2026 | §6.4 rewritten: settings write now mirrors the device form — managed-field allowlist + `save=Save` + language path (writes never persisted before, the `save` field was missing) |
 | 1.3.0 | June 2026 | §6.4: stopped stripping `sw`/`sp` from the POST (interim step, superseded by 1.4.0) |

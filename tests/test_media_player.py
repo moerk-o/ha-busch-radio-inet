@@ -43,6 +43,7 @@ def make_coordinator(**kwargs):
     coord.serial_number = kwargs.get("serial_number", "78C40E33745C")
     coord.mac_address = kwargs.get("mac_address", None)
     coord.available = kwargs.get("available", True)
+    coord.input_source = kwargs.get("input_source", None)
     coord.is_ready = kwargs.get("is_ready", True)
     coord.media_title = kwargs.get("media_title", None)
     coord.media_image_url = kwargs.get("media_image_url", None)
@@ -123,6 +124,11 @@ def test_state_playing_when_power_true_with_station():
     assert player.state == MediaPlayerState.PLAYING
 
 
+def test_state_playing_with_input_source_no_station():
+    player, _, _ = make_player(power=True, is_ready=True, input_source="UPnP")
+    assert player.state == MediaPlayerState.PLAYING
+
+
 def test_state_off_when_power_false():
     player, _, _ = make_player(power=False, volume=10, is_ready=True)
     assert player.state == MediaPlayerState.OFF
@@ -181,14 +187,20 @@ def test_source_none_when_not_playing():
     assert player.source is None
 
 
-def test_source_list_returns_names():
+def test_source_returns_input_source_when_set():
+    # An active input source (UPnP/AUX) takes precedence over the station name.
+    player, _, _ = make_player(station_name="NDR 90.3", input_source="UPnP")
+    assert player.source == "UPnP"
+
+
+def test_source_list_returns_names_plus_input_sources():
     player, _, _ = make_player(station_list=STATION_LIST)
-    assert player.source_list == ["WDR 2", "NDR 90.3", "Rock Radio"]
+    assert player.source_list == ["WDR 2", "NDR 90.3", "Rock Radio", "UPnP", "AUX"]
 
 
-def test_source_list_empty_when_no_stations():
+def test_source_list_only_input_sources_when_no_stations():
     player, _, _ = make_player(station_list=[])
-    assert player.source_list == []
+    assert player.source_list == ["UPnP", "AUX"]
 
 
 def test_media_title_returns_station_name():
@@ -380,6 +392,18 @@ async def test_select_source_empty_station_list_does_not_crash():
     player, _, client = make_player(station_list=[])
     await player.async_select_source("WDR 2")
     client.send_play.assert_not_called()
+
+
+async def test_select_source_upnp_sends_play_upnp():
+    player, _, client = make_player(station_list=STATION_LIST)
+    await player.async_select_source("UPnP")
+    client.send_play.assert_called_once_with("UPNP")
+
+
+async def test_select_source_aux_sends_play_aux():
+    player, _, client = make_player(station_list=STATION_LIST)
+    await player.async_select_source("AUX")
+    client.send_play.assert_called_once_with("AUX")
 
 
 # ===========================================================================

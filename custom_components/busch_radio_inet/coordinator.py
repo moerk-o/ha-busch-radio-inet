@@ -33,6 +33,7 @@ class BuschRadioCoordinator:
         self.station_id: int | None = None
         self.station_name: str | None = None
         self.station_list: list[dict] = []   # [{'id', 'name', 'url'}, …]
+        self.input_source: str | None = None  # "UPnP"/"AUX" when active, else None (station mode)
         self.media_title: str | None = None  # ICY StreamTitle (None = use station_name)
         self.media_image_url: str | None = None  # artwork URL (Tier 1 or Tier 2)
         self.device_name: str | None = None
@@ -157,12 +158,18 @@ class BuschRadioCoordinator:
             except (ValueError, TypeError):
                 _LOGGER.warning("[%s] Invalid VOLUME_SET value: %s", self._host, fields["VOLUME_SET"])
 
-        # --- Playing mode: active ---
-        if fields.get("PLAYING") == "STATION":
+        # --- Playing mode: station ---
+        playing = fields.get("PLAYING")
+        if playing == "STATION":
             try:
                 sid = int(fields.get("ID", 0))
                 name = fields.get("NAME", "")
-                if self.station_id != sid or self.station_name != name:
+                if (
+                    self.station_id != sid
+                    or self.station_name != name
+                    or self.input_source is not None
+                ):
+                    self.input_source = None
                     self.station_id = sid
                     self.station_name = name
                     self.media_image_url = None  # clear immediately; callback follows
@@ -171,9 +178,23 @@ class BuschRadioCoordinator:
             except (ValueError, TypeError):
                 _LOGGER.warning("[%s] Invalid station ID: %s", self._host, fields.get("ID"))
 
+        # --- Playing mode: input source (UPnP / AUX) ---
+        # Device reports "PLAYING:UPNP" and "PLAYING:AUX_IDCOCK" / "AUX/IDOCK".
+        elif playing == "UPNP" and self.input_source != "UPnP":
+            self._enter_input_source("UPnP")
+            changed = True
+        elif playing and playing.startswith("AUX") and self.input_source != "AUX":
+            self._enter_input_source("AUX")
+            changed = True
+
         # --- Playing mode: stopped ---
         if fields.get("MODE") == "PLAYING STOPPED":
-            if self.station_id is not None or self.station_name is not None:
+            if (
+                self.station_id is not None
+                or self.station_name is not None
+                or self.input_source is not None
+            ):
+                self.input_source = None
                 self.station_id = None
                 self.station_name = None
                 changed = True
@@ -245,6 +266,18 @@ class BuschRadioCoordinator:
         if self._artwork_task is not None:
             self._artwork_task.cancel()
             self._artwork_task = None
+
+    def _enter_input_source(self, name: str) -> None:
+        """Switch to a non-station source (UPnP/AUX): clear station + now-playing, stop ICY."""
+        _LOGGER.debug("[%s] Input source: %s", self._host, name)
+        self.input_source = name
+        self.station_id = None
+        self.station_name = None
+        self.media_title = None
+        self.media_image_url = None
+        if self._icy_fetcher is not None:
+            self._icy_fetcher.stop()
+        self.stop_artwork()
 
     def _on_station_changed(self) -> None:
         """Station is changing – stop ICY fetch, cancel artwork, clear stale title."""
