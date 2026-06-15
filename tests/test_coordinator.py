@@ -755,3 +755,76 @@ async def test_poll_reachable_sends_gets():
     coord.set_reachability_client(rc)
     await coord._async_poll()
     assert client.send_get.call_count == 3
+
+
+# ===========================================================================
+# Input sources (UPnP / AUX)
+# ===========================================================================
+
+
+def test_initial_input_source_none():
+    coord, _, _ = make_coordinator()
+    assert coord.input_source is None
+
+
+def test_handle_packet_playing_upnp():
+    coord, _, _ = make_coordinator()
+    coord.station_id = 2
+    coord.station_name = "NDR 90.3"
+    cb = MagicMock()
+    coord.register_callback(cb)
+    coord.handle_packet({"PLAYING": "UPNP", "RESPONSE": "ACK"})
+    assert coord.input_source == "UPnP"
+    assert coord.station_id is None
+    assert coord.station_name is None
+    cb.assert_called_once()
+
+
+@pytest.mark.parametrize("raw", ["AUX_IDCOCK", "AUX/IDOCK", "AUX"])
+def test_handle_packet_playing_aux_variants(raw):
+    coord, _, _ = make_coordinator()
+    coord.handle_packet({"PLAYING": raw})
+    assert coord.input_source == "AUX"
+
+
+def test_enter_input_source_stops_icy_and_clears_now_playing():
+    coord, _, _ = make_coordinator()
+    fetcher = MagicMock()
+    coord.set_icy_fetcher(fetcher)
+    coord.station_id = 2
+    coord.station_name = "NDR 90.3"
+    coord.media_title = "Queen - X"
+    coord.media_image_url = "http://img"
+    coord.handle_packet({"PLAYING": "UPNP"})
+    assert coord.input_source == "UPnP"
+    assert coord.station_id is None
+    assert coord.media_title is None
+    assert coord.media_image_url is None
+    fetcher.stop.assert_called_once()
+
+
+def test_handle_packet_upnp_no_change_no_callback():
+    coord, _, _ = make_coordinator()
+    coord.input_source = "UPnP"
+    cb = MagicMock()
+    coord.register_callback(cb)
+    coord.handle_packet({"PLAYING": "UPNP"})
+    cb.assert_not_called()
+
+
+def test_handle_packet_station_clears_input_source():
+    coord, _, _ = make_coordinator()
+    coord.input_source = "UPnP"
+    coord.handle_packet({"PLAYING": "STATION", "ID": "1", "NAME": "WDR 2"})
+    assert coord.input_source is None
+    assert coord.station_name == "WDR 2"
+
+
+def test_playing_stopped_clears_input_source():
+    coord, _, _ = make_coordinator()
+    coord.input_source = "AUX"
+    cb = MagicMock()
+    coord.register_callback(cb)
+    coord.handle_packet({"MODE": "PLAYING STOPPED"})
+    assert coord.input_source is None
+    cb.assert_called_once()

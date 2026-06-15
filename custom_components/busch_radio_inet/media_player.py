@@ -37,6 +37,10 @@ SUPPORTED_FEATURES = (
     | MediaPlayerEntityFeature.SELECT_SOURCE
 )
 
+# Non-station input sources: HA source name -> PLAY parameter.
+INPUT_SOURCE_COMMANDS = {"UPnP": "UPNP", "AUX": "AUX"}
+INPUT_SOURCES = list(INPUT_SOURCE_COMMANDS)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -119,7 +123,7 @@ class BuschRadioMediaPlayer(MediaPlayerEntity):
             return None
         if not self._coordinator.power:
             return MediaPlayerState.OFF
-        if self._coordinator.station_name:
+        if self._coordinator.station_name or self._coordinator.input_source:
             return MediaPlayerState.PLAYING
         return MediaPlayerState.IDLE
 
@@ -143,11 +147,11 @@ class BuschRadioMediaPlayer(MediaPlayerEntity):
 
     @property
     def source(self) -> str | None:
-        return self._coordinator.station_name
+        return self._coordinator.input_source or self._coordinator.station_name
 
     @property
     def source_list(self) -> list[str]:
-        return [s["name"] for s in self._coordinator.station_list]
+        return [s["name"] for s in self._coordinator.station_list] + INPUT_SOURCES
 
     # ------------------------------------------------------------------
     # Media title / artist
@@ -207,7 +211,10 @@ class BuschRadioMediaPlayer(MediaPlayerEntity):
         self._coordinator.set_muted(mute)
 
     async def async_select_source(self, source: str) -> None:
-        """Select a station by name."""
+        """Select a station by name, or switch to an input source (UPnP/AUX)."""
+        if source in INPUT_SOURCE_COMMANDS:
+            await self._client.send_play(INPUT_SOURCE_COMMANDS[source])
+            return
         for station in self._coordinator.station_list:
             if station["name"] == source:
                 await self._client.send_play(f"STATION:{station['id']}")
