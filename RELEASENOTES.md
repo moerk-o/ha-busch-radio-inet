@@ -1,3 +1,26 @@
+### ✨ New Features
+
+- **UPnP & AUX sources** – The media player source list now includes **UPnP** and **AUX**. Switching to UPnP turns the radio into a DLNA renderer, so Home Assistant can stream audio or send TTS to it. ([#5](https://github.com/moerk-o/ha-busch-radio-inet/issues/5))
+- **Offline detection** – The radio is marked **unavailable** when it stops responding (powered off, network outage, crash) and recovers automatically once it is reachable again. ([#3](https://github.com/moerk-o/ha-busch-radio-inet/issues/3))
+- **Station presets sensor** – A new read-only sensor exposes the 8 station preset slots (name and URL per slot), handy for building dashboard cards.
+- **Integration icon** – The integration now ships its own icon, shown throughout the Home Assistant UI.
+- **Device info** – The device page now shows the **serial number**, the **MAC address**, and a **Visit** link that opens the radio's web interface.
+
+### 🐞 Bug Fixes
+
+- **Device settings now actually apply** – Changing a device setting (sound mode, brightness, timers, …) previously reported success but never took effect on the radio. Writes now persist correctly. ([#6](https://github.com/moerk-o/ha-busch-radio-inet/issues/6))
+- **Misleading diagnostic sensors** – "Switch Input" and "Mains Voltage" showed guessed values that did not match the device. They now show the raw value and are disabled by default.
+
+### 🔧 Infrastructure
+
+- **Minimum Home Assistant version is now 2026.3** – required for the local integration icon.
+
+**Full Changelog**: https://github.com/moerk-o/ha-busch-radio-inet/compare/v1.0.6...v1.1.0
+
+---
+
+# v1.0.6
+
 ### 🐞 Bug Fixes
 
 - **Improved artist/title separation** – The integration now accepts more stream formats. Previously only `Artist - Title` was recognised; `Title / Artist` is now supported as well.
