@@ -1,6 +1,6 @@
 # Technical Reference: Home Assistant Integration `busch_radio_inet`
 
-**Version:** 1.1.0
+**Version:** 1.2.0
 **Date:** June 2026
 **Target Platform:** Home Assistant Custom Integration
 **Development Language:** English (code, comments, variables)
@@ -285,7 +285,12 @@ The HTTP coordinator is started in the background (`async_create_task`) so an un
 | **Manufacturer** | `Busch-Jäger / ABB` |
 | **Model** | `8216 U` |
 | **SW version** | `sw_version` from `INFO_BLOCK` |
+| **Serial number** | `serial_number` from `INFO_BLOCK` (same value as the identifier/`unique_id`) |
+| **Connections** | `(CONNECTION_NETWORK_MAC, mac)` — MAC from `INFO_BLOCK`, normalized via `format_mac()`; only set once the MAC has been received |
+| **Configuration URL** | `http://{host}` — renders the "Visit" link to the device's web interface |
 
+All `INFO_BLOCK` fields (serial, MAC, firmware) arrive asynchronously after the
+startup query, so they populate the device record once the response is processed.
 All entities reference the same identifier so they group under one device.
 
 ### 6.6 HACS Distribution
@@ -369,6 +374,7 @@ The release process follows the central `RELEASE_GUIDE.md` (HACS ZIP release, ve
 
 | Doc Version | Date | Changes |
 |-------------|------|---------|
+| 1.2.0 | June 2026 | §6.5 device registration: documented serial number, MAC connection and configuration URL ("Visit" link) |
 | 1.1.0 | June 2026 | Added §6.6 note on local brand images (`brand/` folder, HA 2026.3 brands proxy API); updated file structure |
 | 1.0.0 | June 2026 | Initial technical reference — communication architecture, push coordinator, ICY strategies, artwork concurrency & sources, HTTP settings Read-Modify-Write, entity catalogue |
 

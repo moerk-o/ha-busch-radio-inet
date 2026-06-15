@@ -33,6 +33,7 @@ def test_initial_state_all_none():
     assert coord.device_name is None
     assert coord.sw_version is None
     assert coord.serial_number is None
+    assert coord.mac_address is None
 
 
 def test_is_ready_false_before_data():
@@ -191,11 +192,13 @@ def test_handle_packet_info_block():
         "SW-VERSION": "03.12",
         "NAME": "RADIO-INET3745C",
         "IPADDR": "192.168.1.179",
+        "MAC": "78:C4:0E:33:74:5C",
         "RESPONSE": "ACK",
     })
     assert coord.serial_number == "78C40E33745C"
     assert coord.sw_version == "03.12"
     assert coord.device_name == "RADIO-INET3745C"
+    assert coord.mac_address == "78:C4:0E:33:74:5C"
 
 
 # ===========================================================================
