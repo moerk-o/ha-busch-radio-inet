@@ -1,6 +1,6 @@
 # Technical Reference: Home Assistant Integration `busch_radio_inet`
 
-**Version:** 1.6.0
+**Version:** 1.7.0
 **Date:** June 2026
 **Target Platform:** Home Assistant Custom Integration
 **Development Language:** English (code, comments, variables)
@@ -185,11 +185,21 @@ Assistant's own DLNA DMR integration streams / TTS to it once the source is set
 to UPnP. `TUNEIN_INIT` exists in the protocol but is not exposed (it only opens
 TuneIn for on-device browsing and then reports `PLAYING STOPPED`).
 
-### 4.2 Energy Mode Sensor (always present alongside HTTP settings)
+### 4.2 Station Presets Sensor (always present)
 
-`BuschRadioEnergyModeSensor` — diagnostic sensor exposing `energy_mode` (PREMIUM / ECO). Its data comes from UDP `POWER_STATUS`, **not** HTTP, but it is registered on the `sensor` platform so it appears and disappears together with the HTTP diagnostic sensors.
+`BuschRadioStationPresetsSensor` — exposes the 8 station preset slots for use in
+dashboards. Data comes from UDP `ALL_STATION_INFO` (the coordinator's
+`station_list`), so it needs no HTTP. The **state** is the number of occupied
+presets; **attributes** `1_name`/`1_url` … `8_name`/`8_url` give every slot
+(empty slots are empty strings). A Lovelace card derives the button count from
+the state and the labels from the names. Read-only — writing presets is not
+supported (separate device mechanism, not implemented).
 
-### 4.3 HTTP Settings Entities (optional)
+### 4.3 Energy Mode Sensor (with HTTP settings)
+
+`BuschRadioEnergyModeSensor` — diagnostic sensor exposing `energy_mode` (PREMIUM / ECO). Its data comes from UDP `POWER_STATUS`, **not** HTTP, but it is registered together with the HTTP diagnostic sensors and so appears only when `expose_http_settings` is on.
+
+### 4.4 HTTP Settings Entities (optional)
 
 Loaded only when `expose_http_settings` is enabled. All read from the `HttpSettingsCoordinator` snapshot of `/radio.cfg` and write back via Read-Modify-Write (§6.4). Field keys are the radio's native `/radio.cfg` keys.
 
@@ -255,8 +265,13 @@ Changing options triggers `async_reload_entry`, which fully reloads the config e
 
 | Condition | Platforms |
 |-----------|-----------|
-| Always | `media_player` |
-| `expose_http_settings = True` | `number`, `select`, `switch`, `time`, `button`, `sensor` |
+| Always | `media_player`, `sensor` |
+| `expose_http_settings = True` | `number`, `select`, `switch`, `time`, `button` |
+
+The `sensor` platform is always loaded but only adds the always-available
+**Station Presets** sensor (UDP); the diagnostic sensors (Energy Mode, `sw`,
+`sp`) need the HTTP coordinator and are added only when `expose_http_settings`
+is on.
 
 The chosen list is stored in `hass.data[DOMAIN][entry_id]["platforms"]` and used again on unload.
 
@@ -389,6 +404,7 @@ The release process follows the central `RELEASE_GUIDE.md` (HACS ZIP release, ve
 
 | Doc Version | Date | Changes |
 |-------------|------|---------|
+| 1.7.0 | June 2026 | §4.2: read-only Station Presets sensor (state = count, `N_name`/`N_url` attributes); sensor platform now always loaded |
 | 1.6.0 | June 2026 | §4.1: UPnP/AUX input sources — selectable in `source_list`, active source detected from `PLAYING:UPNP`/`AUX`; UPnP streaming via HA DLNA (Issue #5) |
 | 1.5.0 | June 2026 | §3.1: availability/reachability — fallback poll now probes the device via HTTP, marks it unavailable when offline and recovers automatically (Issue #3) |
 | 1.4.0 | June 2026 | §6.4 rewritten: settings write now mirrors the device form — managed-field allowlist + `save=Save` + language path (writes never persisted before, the `save` field was missing) |
