@@ -1,6 +1,6 @@
 # Technical Reference: Home Assistant Integration `busch_radio_inet`
 
-**Version:** 1.2.1
+**Version:** 1.3.0
 **Date:** June 2026
 **Target Platform:** Home Assistant Custom Integration
 **Development Language:** English (code, comments, variables)
@@ -195,7 +195,7 @@ Loaded only when `expose_http_settings` is enabled. All read from the `HttpSetti
 
 **Sync Time button:** writes `hr`, `mi` and `zs=1` (Manual) atomically — the device ignores `hr`/`mi` while Internet time sync is active, so manual mode must be set together with the time. The user can switch back to Internet sync via the Time Source select.
 
-**Read-only diagnostics:** `sw` ("Switch Input") and `sp` ("Mains Voltage") are exposed as sensors only and are **write-blocked** at the HTTP client level (§6.4). Their real meaning is **unconfirmed** — the device reports a value (observed: `4`) that matches neither originally assumed encoding (`sw`: 0/1/2, `sp`: 0/1), and both fields always carry the same value. No value mapping is applied (raw value shown) and both sensors are **disabled by default**.
+**Read-only diagnostics:** `sw` ("Switch Input") and `sp` ("Mains Voltage") are exposed as read-only sensors (no writable entity). Their real meaning is **unconfirmed** — the device reports a value (observed: `4`) that matches neither originally assumed encoding (`sw`: 0/1/2, `sp`: 0/1), and both fields always carry the same value. No value mapping is applied (raw value shown) and both sensors are **disabled by default**. On settings writes they are written back unchanged like every other field (§6.4).
 
 ---
 
@@ -270,9 +270,11 @@ The chosen list is stored in `hass.data[DOMAIN][entry_id]["platforms"]` and used
 
 **Why this approach:** Read-Modify-Write preserves all other settings and makes multi-field changes (time entities, Sync Time) atomic from the device's perspective.
 
-**Safety rails in `http_client.py`:**
-- **Blocked fields** (`sw`, `sp`) are stripped from every POST — they are hardware-level (switch-input function, mains voltage) and must never be set over HTTP. They remain readable as diagnostic sensors.
+**Field handling in `http_client.py`:**
+- **No field is dropped.** Every field from the GET is written back unchanged; only the field being set is patched (by the caller). This includes `sw`/`sp`.
 - **Checkbox fields** (`aw`, `sz`, `ea`, `et`, `es`) are always included explicitly as `"1"` or `""`, because an omitted checkbox would read as "off" and could silently clear a setting.
+
+> **Status — superseded decision:** Earlier versions *stripped* `sw`/`sp` from every POST ("never set these hardware-level fields over HTTP"). That was wrong: `/en/general.cgi` resets any managed field that is **absent** from the form to its default, so stripping `sw`/`sp` made the device reset them to `0` on *every* settings change (observed as the diagnostic value flipping from `4` to a mapped default). Writing every field back with its current value leaves all managed fields untouched and is the only safe approach. `sw`/`sp` remain read-only at the entity level (no writable entity) — they are simply no longer removed from the form.
 
 The HTTP coordinator is started in the background (`async_create_task`) so an unreachable HTTP interface never blocks the main setup — entities simply stay `unavailable` until the first successful fetch.
 
@@ -374,6 +376,7 @@ The release process follows the central `RELEASE_GUIDE.md` (HACS ZIP release, ve
 
 | Doc Version | Date | Changes |
 |-------------|------|---------|
+| 1.3.0 | June 2026 | §6.4: reversed the `sw`/`sp` strip — all fields are now written back unchanged (stripping caused the device to reset them to default on every write) |
 | 1.2.1 | June 2026 | Clarified `sw`/`sp` diagnostic sensors: meaning unconfirmed, raw value shown (no mapping), disabled by default |
 | 1.2.0 | June 2026 | §6.5 device registration: documented serial number, MAC connection and configuration URL ("Visit" link) |
 | 1.1.0 | June 2026 | Added §6.6 note on local brand images (`brand/` folder, HA 2026.3 brands proxy API); updated file structure |

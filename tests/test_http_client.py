@@ -171,7 +171,9 @@ async def test_async_get_config_calls_raise_for_status():
 
 
 @pytest.mark.asyncio
-async def test_async_post_general_removes_blocked_fields():
+async def test_async_post_general_writes_all_fields_unchanged():
+    """Every field is written back unchanged — including sw/sp, which used to be
+    dropped. Omitting them made the device reset them to its default."""
     client, hass = _make_client()
     mock_resp = AsyncMock()
     mock_resp.status = 200
@@ -191,11 +193,11 @@ async def test_async_post_general_removes_blocked_fields():
         "custom_components.busch_radio_inet.http_client.async_get_clientsession",
         return_value=mock_session,
     ):
-        await client.async_post_general({"bb": "100", "sw": "1", "sp": "0"})
+        await client.async_post_general({"bb": "100", "sw": "4", "sp": "4"})
 
-    assert "sw" not in captured_data
-    assert "sp" not in captured_data
     assert captured_data["bb"] == "100"
+    assert captured_data["sw"] == "4"
+    assert captured_data["sp"] == "4"
 
 
 @pytest.mark.asyncio

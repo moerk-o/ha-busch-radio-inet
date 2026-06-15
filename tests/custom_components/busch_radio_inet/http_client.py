@@ -34,9 +34,6 @@ def parse_radio_cfg(text: str) -> dict[str, str]:
 class HttpSettingsClient:
     """Low-level HTTP client for reading and writing device settings."""
 
-    # Fields that must NEVER be included in a POST (hardware-level, dangerous)
-    _BLOCKED_FIELDS = frozenset({"sw", "sp"})
-
     # All checkbox fields – always sent, either "1" (on) or "" (off)
     _CHECKBOX_FIELDS = frozenset({"aw", "sz", "ea", "et", "es"})
 
@@ -56,11 +53,15 @@ class HttpSettingsClient:
     async def async_post_general(self, fields: dict[str, str]) -> None:
         """POST the full settings dict to /en/general.cgi.
 
-        Safety rules applied before sending:
-        - sw and sp are always removed (hardware-level, must never be set via HTTP)
-        - Checkbox fields always present: "1" if truthy, "" if falsy/missing
+        Every field read from /radio.cfg is written back unchanged (the caller
+        only patches the field being set). No field is dropped: the device
+        resets any managed field that is absent from the form to its default
+        (observed with 'sw'/'sp' resetting to 0 on every write), so omitting a
+        field is unsafe. The only adjustment is checkbox normalization, which
+        ensures every checkbox field is present ("1" on / "" off) because an
+        absent checkbox would likewise be read as off.
         """
-        safe = {k: v for k, v in fields.items() if k not in self._BLOCKED_FIELDS}
+        safe = dict(fields)
 
         # Ensure all checkbox fields are present (even when off)
         for cb in self._CHECKBOX_FIELDS:
