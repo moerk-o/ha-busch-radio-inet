@@ -1,5 +1,6 @@
 {
   "name": "Busch-Radio iNet",
+  "homeassistant": "2026.3.0",
   "zip_release": true,
   "filename": "busch_radio_inet.zip",
   "render_readme": true

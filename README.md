@@ -58,6 +58,7 @@ song or station. No account or API key is needed.
 
 ## Requirements
 
+- Home Assistant **2026.3** or newer
 - Busch-Jäger **Busch-Radio iNet** (obviously)
 - UDP port **4242** available on the HA host (listen port)
 - The radio's device port **4244** reachable from HA
