@@ -444,7 +444,7 @@ class BuschRadioCoordinator:
             if not pending:
                 if attempt:
                     _LOGGER.debug(
-                        "[%s] Startup state complete after %d passes",
+                        "[%s] Startup state complete after pass %d",
                         self._host,
                         attempt,
                     )
