@@ -13,7 +13,14 @@ from datetime import timedelta
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_track_time_interval
 
-from .const import POLL_INTERVAL, QUERY_SPACING, STARTUP_RETRY_DELAYS
+from .const import (
+    POLL_INTERVAL,
+    PROBE_ATTEMPTS,
+    PROBE_RETRY_DELAY,
+    PROBE_TIMEOUT,
+    QUERY_SPACING,
+    STARTUP_RETRY_DELAYS,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,6 +48,9 @@ class BuschRadioCoordinator:
         self.serial_number: str | None = None
         self.mac_address: str | None = None
         self.energy_mode: str | None = None
+
+        # Set by the first packet of any kind – the setup probe waits on it.
+        self._packet_received = asyncio.Event()
 
         # PLAYING_MODE has no field of its own that survives an "idle" answer,
         # so completion of that query is tracked explicitly.
@@ -115,6 +125,9 @@ class BuschRadioCoordinator:
 
         Called by the listener for every non-NOTIFICATION packet.
         """
+        # Even a NACK proves the device is alive, which is all the probe asks.
+        self._packet_received.set()
+
         if fields.get("RESPONSE") == "NACK":
             _LOGGER.debug(
                 "[%s] Received NACK for command '%s', ignoring",
@@ -399,6 +412,35 @@ class BuschRadioCoordinator:
     # ------------------------------------------------------------------
     # Startup queries
     # ------------------------------------------------------------------
+
+    async def async_probe_device(self) -> bool:
+        """Return True once the device answers, False if it stays silent.
+
+        Setup uses this to fail with ConfigEntryNotReady instead of creating
+        entities that could only ever be unavailable.  UDP has no
+        retransmission, so a single lost answer must not condemn a healthy
+        device — the query is repeated up to PROBE_ATTEMPTS times.
+        """
+        for attempt in range(PROBE_ATTEMPTS):
+            if attempt:
+                await asyncio.sleep(PROBE_RETRY_DELAY)
+
+            await self._client.send_get("INFO_BLOCK")
+            try:
+                await asyncio.wait_for(
+                    self._packet_received.wait(), timeout=PROBE_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                _LOGGER.debug(
+                    "[%s] Setup probe: no answer (attempt %d/%d)",
+                    self._host,
+                    attempt + 1,
+                    PROBE_ATTEMPTS,
+                )
+                continue
+            return True
+
+        return False
 
     async def _send_paced(self, parameters: list[str]) -> None:
         """Send GET queries one at a time, QUERY_SPACING apart.

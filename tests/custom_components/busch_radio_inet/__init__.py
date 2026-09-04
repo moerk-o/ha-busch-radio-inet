@@ -84,9 +84,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         on_notification=coordinator.handle_notification,
     )
 
+    # Confirm the device is actually there before building anything on top of
+    # it.  Without this the setup always succeeded and a radio that had moved
+    # to another IP just left every entity unavailable, with nothing in the UI
+    # saying why.
+    if not await coordinator.async_probe_device():
+        _release_listener(hass, shared_listener, host)
+        raise ConfigEntryNotReady(
+            f"No response from the radio at {host}:{port} – check that it is "
+            f"powered on, reachable, and that its Energy Mode is 'Premium'"
+        )
+
     # Startup queries run in the background: they are spaced out and repeated
     # (see BuschRadioCoordinator.async_run_startup_queries), which must not
-    # hold up setup.  Responses arrive via the shared listener.
+    # hold up setup.  Responses arrive via the shared listener.  INFO_BLOCK is
+    # already answered by the probe above, so the first pass skips it.
     startup_queries = hass.async_create_task(
         coordinator.async_run_startup_queries()
     )
@@ -155,6 +167,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
+def _release_listener(
+    hass: HomeAssistant, shared_listener: SharedUDPListener, host: str
+) -> None:
+    """Unregister a device and drop the shared listener once it is unused.
+
+    Home Assistant retries a setup that raised ConfigEntryNotReady, so a failed
+    attempt must not leave its registration behind: it would keep the listener
+    alive with a device that is not there and make the next attempt reuse a
+    stale entry.
+    """
+    shared_listener.unregister(host)
+    if not shared_listener.has_devices:
+        shared_listener.stop()
+        hass.data[DOMAIN].pop(_SHARED_LISTENER_KEY, None)
+
+
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload the entry when options change."""
     await hass.config_entries.async_reload(entry.entry_id)
@@ -175,14 +203,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         data["coordinator"].stop_icy()
         data["coordinator"].stop_artwork()
 
-        # Unregister this device from the shared listener.
+        # Unregister this device and drop the listener with the last device.
         shared_listener: SharedUDPListener = hass.data[DOMAIN][_SHARED_LISTENER_KEY]
-        shared_listener.unregister(data["host"])
-
-        # Stop and remove the shared listener when the last device is gone.
-        if not shared_listener.has_devices:
-            shared_listener.stop()
-            del hass.data[DOMAIN][_SHARED_LISTENER_KEY]
+        _release_listener(hass, shared_listener, data["host"])
 
         # http_coordinator is a DataUpdateCoordinator – no explicit stop() needed
 

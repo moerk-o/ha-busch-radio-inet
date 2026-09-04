@@ -1,6 +1,6 @@
 # Technical Reference: Home Assistant Integration `busch_radio_inet`
 
-**Version:** 1.9.0
+**Version:** 1.10.0
 **Date:** September 2026
 **Target Platform:** Home Assistant Custom Integration
 **Development Language:** English (code, comments, variables)
@@ -104,6 +104,22 @@ The `BuschRadioUDPClient` (`udp_client.py`) is send-only: it opens a datagram en
 
 **Consequences:** A device that answers promptly is fully initialised after roughly 1.6 s instead of immediately — imperceptible, since entities are unavailable until the answers arrive either way. Test runs neutralise both constants through an autouse fixture, otherwise every entry setup would hold the event loop for the entire retry schedule.
 
+### 2.6 Setup Probe
+
+**Decision:** `async_setup_entry` sends a `GET INFO_BLOCK` and raises `ConfigEntryNotReady` when the device does not answer within `PROBE_TIMEOUT` (2 s) across `PROBE_ATTEMPTS` (3) tries.
+
+**Context:** Setup previously always succeeded. UDP is fire-and-forget (§2.4), so nothing in the setup path could tell a working radio from an absent one — the queries went out and, if the device was gone, no answer ever came. The entry looked healthy in the UI while every entity sat at `unavailable` with nothing explaining why. A radio that had been given a new IP address produced exactly this: silent, permanent, unexplained.
+
+**Why this approach:** Failing setup is what puts the entry into Home Assistant's "retrying setup" state, which is visible in the UI and retried with a growing backoff until the device answers. The probe deliberately uses **UDP**, not the HTTP settings interface: the two channels are independent, and a device whose web server answers while its control channel is dead is a real state — observed on the test device, where `/radio.cfg` and the settings form worked normally while the UDP path was answering almost nothing. An HTTP probe would have reported that radio as healthy and reproduced the very failure this is meant to surface.
+
+Because UDP has no retransmission, one lost answer must not condemn a healthy device, so the query is repeated up to three times. Observation backs the retry budget: single queries were answered every time even at -90 dBm, in 120–450 ms; only queries inside a burst were lost (§2.5). The worst case is ~7 s, below the 10 s at which Home Assistant starts warning about slow setups.
+
+**Alternatives considered:**
+- HTTP probe against `/radio.cfg` (`async_is_reachable()`, already used by the fallback poll) — rejected for the reason above. It stays in use for *runtime* reachability, where its TCP retransmission is an advantage.
+- Waiting for the first startup pass to complete instead of a dedicated probe — rejected: it ties setup duration to the full retry schedule (~52 s).
+
+**Consequences:** A failed attempt must not leak its registration, since Home Assistant retries setup: `_release_listener()` unregisters the device and closes the shared socket when no device is left, and is used by the unload path as well. The probe's answer also populates `serial_number`, so the first startup pass skips `INFO_BLOCK` (§2.5). Tests stub the probe through an autouse fixture; the ones covering it carry the `real_setup_probe` marker.
+
 ---
 
 ## 3. Core Logic
@@ -123,7 +139,7 @@ The `BuschRadioUDPClient` (`udp_client.py`) is send-only: it opens a datagram en
 
 **Consequences:** Two different coordinator styles coexist (push for media, polling for HTTP settings — see §3.4 and §6.4). Entities must register/unregister their callback in `async_added_to_hass` / `async_will_remove_from_hass`.
 
-**Readiness / availability:** `is_ready` becomes true once both power and volume have been received. Entities are `available` only when `is_ready` **and** the device is reachable (`available = is_ready and self._reachable`). Reachability is verified in the fallback poll via a short HTTP GET to `/radio.cfg` (independent of the HTTP-settings feature, so it works even when those entities are disabled): a failed probe marks the device `unavailable`, stops the ICY stream and clears now-playing. The device recovers automatically on the next successful poll **or** as soon as any UDP packet arrives (`_mark_reachable()` in `handle_packet`). State maps to `OFF` / `IDLE` (powered, no station) / `PLAYING` (station active).
+**Readiness / availability:** the device is known to be present before any of this — setup fails outright if it does not answer (§2.6). `is_ready` becomes true once both power and volume have been received. Entities are `available` only when `is_ready` **and** the device is reachable (`available = is_ready and self._reachable`). Reachability is verified in the fallback poll via a short HTTP GET to `/radio.cfg` (independent of the HTTP-settings feature, so it works even when those entities are disabled): a failed probe marks the device `unavailable`, stops the ICY stream and clears now-playing. The device recovers automatically on the next successful poll **or** as soon as any UDP packet arrives (`_mark_reachable()` in `handle_packet`). State maps to `OFF` / `IDLE` (powered, no station) / `PLAYING` (station active).
 
 ### 3.2 ICY Now-Playing Metadata
 
@@ -443,6 +459,7 @@ The release process follows the central `RELEASE_GUIDE.md` (HACS ZIP release, ve
 
 | Doc Version | Date | Changes |
 |-------------|------|---------|
+| 1.10.0 | September 2026 | New §2.6: setup probes the device over UDP and fails with `ConfigEntryNotReady` instead of setting up an entry whose entities can only be unavailable |
 | 1.9.0 | September 2026 | New §2.5: query pacing and startup retries — the radio answers only the first query of a burst, which left `volume` unset and every UDP entity permanently unavailable |
 | 1.8.0 | September 2026 | §5.2: reconfigure flow for host/port with host-uniqueness and serial-identity guards; §2.2: listener registration is restored after a config-flow probe; §6.3: entry data no longer immutable; §5.2: reload is left to the update listener (double reload dropped answers and breaks in HA 2026.12) |
 | 1.7.0 | June 2026 | §4.2: read-only Station Presets sensor (state = count, `N_name`/`N_url` attributes); sensor platform now always loaded |

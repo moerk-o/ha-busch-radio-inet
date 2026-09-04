@@ -18,6 +18,74 @@ def make_coordinator(hass=None, client=None):
 
 
 # ===========================================================================
+# Setup probe
+# ===========================================================================
+
+
+@pytest.mark.real_setup_probe
+async def test_probe_returns_true_when_the_device_answers():
+    coord, _, client = make_coordinator()
+
+    async def answer(parameter):
+        coord.handle_packet({"SERNO": "78C40E33745C"})
+
+    client.send_get = AsyncMock(side_effect=answer)
+
+    assert await coord.async_probe_device() is True
+    client.send_get.assert_awaited_once_with("INFO_BLOCK")
+
+
+@pytest.mark.real_setup_probe
+async def test_probe_accepts_a_nack_as_proof_of_life():
+    """A NACK is not a useful answer, but it does prove the radio is there."""
+    coord, _, client = make_coordinator()
+
+    async def answer(parameter):
+        coord.handle_packet({"RESPONSE": "NACK", "_parameter": "INFO_BLOCK"})
+
+    client.send_get = AsyncMock(side_effect=answer)
+
+    assert await coord.async_probe_device() is True
+
+
+@pytest.mark.real_setup_probe
+async def test_probe_retries_before_giving_up():
+    """A single lost answer must not condemn a healthy device."""
+    coord, _, client = make_coordinator()
+
+    with patch(
+        "custom_components.busch_radio_inet.coordinator.PROBE_TIMEOUT", 0.01
+    ), patch(
+        "custom_components.busch_radio_inet.coordinator.PROBE_RETRY_DELAY", 0
+    ), patch(
+        "custom_components.busch_radio_inet.coordinator.PROBE_ATTEMPTS", 3
+    ):
+        assert await coord.async_probe_device() is False
+
+    assert client.send_get.await_count == 3
+
+
+@pytest.mark.real_setup_probe
+async def test_probe_succeeds_on_a_later_attempt():
+    coord, _, client = make_coordinator()
+    attempts = []
+
+    async def answer_on_third_try(parameter):
+        attempts.append(parameter)
+        if len(attempts) == 3:
+            coord.handle_packet({"SERNO": "78C40E33745C"})
+
+    client.send_get = AsyncMock(side_effect=answer_on_third_try)
+
+    with patch(
+        "custom_components.busch_radio_inet.coordinator.PROBE_TIMEOUT", 0.01
+    ), patch("custom_components.busch_radio_inet.coordinator.PROBE_RETRY_DELAY", 0):
+        assert await coord.async_probe_device() is True
+
+    assert len(attempts) == 3
+
+
+# ===========================================================================
 # Startup queries – pacing and retries
 # ===========================================================================
 

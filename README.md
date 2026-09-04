@@ -224,7 +224,12 @@ are fetched from the radio over the local network and written back when changed.
 
 ### Entity shows `unavailable`
 
-The integration marks the device **unavailable** when it stops responding — powered off at
+If the radio does not answer while Home Assistant is starting up, the integration
+reports **"Retrying setup"** on the integration entry instead of silently creating
+entities that cannot work. Home Assistant then keeps retrying on its own, and the entry
+recovers as soon as the radio answers.
+
+During operation the integration marks the device **unavailable** when it stops responding — powered off at
 the socket, network outage, or a device crash. Reachability is re-checked at least every
 5 minutes, and the device **recovers automatically** once it is back online (no reload
 needed). At startup the entities stay `unavailable` until the radio first responds.

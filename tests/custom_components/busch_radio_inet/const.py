@@ -29,6 +29,12 @@ STARTUP_RETRY_DELAYS = (2, 5, 15, 30)
 # Timeout for config flow connection validation (seconds)
 CONNECT_TIMEOUT = 5
 
+# Setup probe: the device has to answer before an entry counts as set up.
+# UDP has no retransmission, so a lost answer is retried before setup fails.
+PROBE_TIMEOUT = 2.0
+PROBE_ATTEMPTS = 3
+PROBE_RETRY_DELAY = 0.5
+
 # Notification event names
 EVENT_POWER_ON = "POWER_ON"
 EVENT_POWER_OFF = "POWER_OFF"
