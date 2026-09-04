@@ -137,7 +137,7 @@ The `BuschRadioUDPClient` (`udp_client.py`) is send-only: it opens a datagram en
 - Keep requiring both — rejected: couples an attribute nothing depends on to the availability of the whole device.
 - Drop the data condition entirely (`available = self._reachable`) — closer to Home Assistant's convention that availability answers "can I reach the device". Not taken: the entity would briefly be available with an unknown state, and the gain over requiring the single answer that determines the state is small.
 
-**Consequences:** Right after setup the volume can be unknown for the moment until its answer arrives, so the volume control has no value to show. The station-presets sensor reports `len(station_list)`, i.e. **0** rather than "unknown", while `ALL_STATION_INFO` is still outstanding — a window that already existed (readiness never covered the station list) and that this decision widens slightly.
+**Consequences:** Right after setup the volume can be unknown for the moment until its answer arrives, so the volume control has no value to show. The station-presets sensor needed its own availability rule (§4.2): it counts the station list, so while `ALL_STATION_INFO` was outstanding it reported **0** — indistinguishable from a radio that genuinely has no presets stored. That window existed before this change too (readiness never covered the station list) and is now closed.
 
 ### 3.2 ICY Now-Playing Metadata
 
@@ -222,6 +222,13 @@ presets; **attributes** `1_name`/`1_url` … `8_name`/`8_url` give every slot
 (empty slots are empty strings). A Lovelace card derives the button count from
 the state and the labels from the names. Read-only — writing presets is not
 supported (separate device mechanism, not implemented).
+
+The sensor is **unavailable until an `ALL_STATION_INFO` answer has actually
+arrived**, tracked by `station_list_known` rather than by the list being
+non-empty: an empty list is a valid answer from a radio with no presets
+stored, and the state (a count) cannot express "not known yet" on its own.
+The same flag tells `_pending_startup_queries()` (§2.5) whether the query
+still needs repeating, so a radio without presets is not asked again in vain.
 
 ### 4.3 Energy Mode Sensor (with HTTP settings)
 
@@ -457,7 +464,7 @@ The release process follows the central `RELEASE_GUIDE.md` (HACS ZIP release, ve
 
 | Doc Version | Date | Changes |
 |-------------|------|---------|
-| 1.11.0 | September 2026 | §3.1: readiness no longer requires the volume — a lost `VOLUME` answer used to leave every UDP entity unavailable although nothing displayed depends on it |
+| 1.11.0 | September 2026 | §3.1: readiness no longer requires the volume — a lost `VOLUME` answer used to leave every UDP entity unavailable although nothing displayed depends on it; §4.2: the presets sensor stays unavailable until the station list has actually arrived |
 | 1.9.0 | September 2026 | New §2.5: query pacing and startup retries — the radio answers only the first query of a burst, which left `volume` unset and every UDP entity permanently unavailable |
 | 1.8.0 | September 2026 | §5.2: reconfigure flow for host/port with host-uniqueness and serial-identity guards; §2.2: listener registration is restored after a config-flow probe; §6.3: entry data no longer immutable; §5.2: reload is left to the update listener (double reload dropped answers and breaks in HA 2026.12) |
 | 1.7.0 | June 2026 | §4.2: read-only Station Presets sensor (state = count, `N_name`/`N_url` attributes); sensor platform now always loaded |

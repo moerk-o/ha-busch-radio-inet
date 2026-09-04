@@ -42,6 +42,10 @@ class BuschRadioCoordinator:
         self.mac_address: str | None = None
         self.energy_mode: str | None = None
 
+        # An empty station list is a valid answer (a radio with no presets
+        # stored), so "answered" cannot be derived from the list itself.
+        self._station_list_known: bool = False
+
         # PLAYING_MODE has no field of its own that survives an "idle" answer,
         # so completion of that query is tracked explicitly.
         self._playing_mode_known: bool = False
@@ -74,6 +78,11 @@ class BuschRadioCoordinator:
     def available(self) -> bool:
         """True when initialised and the device is currently reachable."""
         return self.is_ready and self._reachable
+
+    @property
+    def station_list_known(self) -> bool:
+        """True once the device has answered ALL_STATION_INFO."""
+        return self._station_list_known
 
     def set_reachability_client(self, client) -> None:
         """Attach the HTTP client used by the fallback poll to verify reachability."""
@@ -213,6 +222,7 @@ class BuschRadioCoordinator:
 
         # --- Station list (ALL_STATION_INFO) ---
         if "_stations" in fields:
+            self._station_list_known = True
             new_list = fields["_stations"]
             if self.station_list != new_list:
                 self.station_list = new_list
@@ -421,7 +431,7 @@ class BuschRadioCoordinator:
         pending = []
         if self.serial_number is None:
             pending.append("INFO_BLOCK")
-        if not self.station_list:
+        if not self._station_list_known:
             pending.append("ALL_STATION_INFO")
         if self.power is None:
             pending.append("POWER_STATUS")
