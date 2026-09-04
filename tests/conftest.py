@@ -18,6 +18,23 @@ def auto_enable_custom_integrations(enable_custom_integrations):
     return enable_custom_integrations
 
 
+@pytest.fixture(autouse=True)
+def no_startup_query_delays():
+    """Strip the real-time pacing and retry waits from the startup queries.
+
+    Left alone, every entry setup would hold the event loop for the full retry
+    schedule.  The tests that cover the pacing itself patch these deliberately.
+    """
+    from unittest.mock import patch
+
+    with patch(
+        "custom_components.busch_radio_inet.coordinator.QUERY_SPACING", 0
+    ), patch(
+        "custom_components.busch_radio_inet.coordinator.STARTUP_RETRY_DELAYS", ()
+    ):
+        yield
+
+
 @pytest.fixture
 def device_host() -> str:
     return "192.168.1.179"

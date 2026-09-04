@@ -13,7 +13,7 @@ from datetime import timedelta
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_track_time_interval
 
-from .const import POLL_INTERVAL
+from .const import POLL_INTERVAL, QUERY_SPACING, STARTUP_RETRY_DELAYS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,6 +41,10 @@ class BuschRadioCoordinator:
         self.serial_number: str | None = None
         self.mac_address: str | None = None
         self.energy_mode: str | None = None
+
+        # PLAYING_MODE has no field of its own that survives an "idle" answer,
+        # so completion of that query is tracked explicitly.
+        self._playing_mode_known: bool = False
 
         self._reachable: bool = True  # set False when the device stops answering
         self._reachability_client = None  # set via set_reachability_client()
@@ -186,6 +190,9 @@ class BuschRadioCoordinator:
         elif playing and playing.startswith("AUX") and self.input_source != "AUX":
             self._enter_input_source("AUX")
             changed = True
+
+        if playing is not None or "MODE" in fields:
+            self._playing_mode_known = True
 
         # --- Playing mode: stopped ---
         if fields.get("MODE") == "PLAYING STOPPED":
@@ -390,6 +397,74 @@ class BuschRadioCoordinator:
             cb()
 
     # ------------------------------------------------------------------
+    # Startup queries
+    # ------------------------------------------------------------------
+
+    async def _send_paced(self, parameters: list[str]) -> None:
+        """Send GET queries one at a time, QUERY_SPACING apart.
+
+        Sending them back to back loses all but the first — see
+        async_run_startup_queries().
+        """
+        for index, parameter in enumerate(parameters):
+            if index:
+                await asyncio.sleep(QUERY_SPACING)
+            await self._client.send_get(parameter)
+
+    def _pending_startup_queries(self) -> list[str]:
+        """Return the startup queries whose answer has not arrived yet."""
+        pending = []
+        if self.serial_number is None:
+            pending.append("INFO_BLOCK")
+        if not self.station_list:
+            pending.append("ALL_STATION_INFO")
+        if self.power is None:
+            pending.append("POWER_STATUS")
+        if self.volume is None:
+            pending.append("VOLUME")
+        if not self._playing_mode_known:
+            pending.append("PLAYING_MODE")
+        return pending
+
+    async def async_run_startup_queries(self) -> None:
+        """Ask the device for its initial state, pacing and repeating requests.
+
+        The radio answers only the first query of a burst and silently drops
+        the rest; UDP has no retransmission, so a dropped query is lost for
+        good.  Until both power and volume have arrived the coordinator is not
+        ready and every entity stays unavailable, so the queries are spaced out
+        and whatever is still missing is asked again a few times.  Anything
+        still unanswered after that is left to the fallback poll.
+        """
+        for attempt, delay in enumerate((0, *STARTUP_RETRY_DELAYS)):
+            if delay:
+                await asyncio.sleep(delay)
+
+            pending = self._pending_startup_queries()
+            if not pending:
+                if attempt:
+                    _LOGGER.debug(
+                        "[%s] Startup state complete after pass %d",
+                        self._host,
+                        attempt,
+                    )
+                return
+
+            _LOGGER.debug(
+                "[%s] Startup queries, pass %d: %s",
+                self._host,
+                attempt + 1,
+                ", ".join(pending),
+            )
+            await self._send_paced(pending)
+
+        _LOGGER.debug(
+            "[%s] Startup queries exhausted, still missing: %s",
+            self._host,
+            ", ".join(self._pending_startup_queries()) or "nothing",
+        )
+
+    # ------------------------------------------------------------------
     # Reachability
     # ------------------------------------------------------------------
 
@@ -430,6 +505,4 @@ class BuschRadioCoordinator:
             self._mark_reachable()
 
         _LOGGER.debug("[%s] Fallback poll: refreshing device state", self._host)
-        await self._client.send_get("POWER_STATUS")
-        await self._client.send_get("VOLUME")
-        await self._client.send_get("PLAYING_MODE")
+        await self._send_paced(["POWER_STATUS", "VOLUME", "PLAYING_MODE"])

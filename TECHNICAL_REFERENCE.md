@@ -1,6 +1,6 @@
 # Technical Reference: Home Assistant Integration `busch_radio_inet`
 
-**Version:** 1.8.0
+**Version:** 1.9.0
 **Date:** September 2026
 **Target Platform:** Home Assistant Custom Integration
 **Development Language:** English (code, comments, variables)
@@ -58,7 +58,7 @@ COMMAND:PLAY\r\n<parameter>\r\nID:HA\r\n\r\n    # start a station
 
 Every command carries `ID:HA` as a sender tag. Responses echo this field, so the listener and parser deliberately drop the `ID:HA` echo line to avoid colliding with the station `ID` field used in `PLAYING_MODE` responses (see `parse_packet()` in `udp_listener.py`).
 
-**Startup queries** (sent on every setup, answered asynchronously via the listener): `INFO_BLOCK`, `ALL_STATION_INFO`, `POWER_STATUS`, `VOLUME`, `PLAYING_MODE`.
+**Startup queries** (sent on every setup, answered asynchronously via the listener): `INFO_BLOCK`, `ALL_STATION_INFO`, `POWER_STATUS`, `VOLUME`, `PLAYING_MODE`. They are paced and repeated — see §2.5.
 
 **Notification → follow-up GET pattern:** Unsolicited `NOTIFICATION` packets (e.g. `VOLUME_CHANGED`, `STATION_CHANGED`, `URL_IS_PLAYING`, `POWER_ON`, `POWER_OFF`) do not contain the new value. The listener reacts by sending the matching `GET` (e.g. `VOLUME_CHANGED → GET VOLUME`) and additionally forwards the raw event name to the coordinator for higher-level reactions (ICY start/stop, artwork clearing).
 
@@ -89,6 +89,20 @@ Every command carries `ID:HA` as a sender tag. Responses echo this field, so the
 ### 2.4 Fire-and-Forget Client
 
 The `BuschRadioUDPClient` (`udp_client.py`) is send-only: it opens a datagram endpoint, sends, and closes. It has **no receive socket** — all responses arrive through the shared listener. This keeps command sending stateless and avoids a second socket competing for port 4242.
+
+### 2.5 Query Pacing and Startup Retries
+
+**Decision:** GET queries are never sent back to back. They go out one at a time, `QUERY_SPACING` (0.4 s) apart, and the startup set is repeated for whatever is still unanswered after `STARTUP_RETRY_DELAYS` (2 s, 5 s, 15 s, 30 s).
+
+**Context:** The five startup queries used to be sent in an uninterrupted burst, microseconds apart. Captured against a real device (firmware 03.12, WLAN at -87 to -92 dBm), the radio answered only the **first** query of each burst and silently dropped the rest — over four observed rounds the first position was answered 4/4 times, the following positions 3/16. A single query on its own was answered every time. Because `VOLUME` sits at position 4, it was never answered at all, `is_ready` (which needs power **and** volume, §3.1) never turned true, and every UDP entity stayed `unavailable` indefinitely. The fallback poll made it worse rather than better: it sent its own three-query burst, so `VOLUME` at position 2 kept being dropped.
+
+**Why this approach:** The device is a small embedded controller that appears to drop requests arriving while it is still answering the previous one, so spacing addresses the cause directly. On top of that, UDP has no retransmission and the client is fire-and-forget (§2.4) — a lost query is lost for good — so unanswered queries have to be repeated explicitly. `_pending_startup_queries()` derives what is missing from the coordinator state itself (`serial_number`, `station_list`, `power`, `volume`, plus a `_playing_mode_known` flag for `PLAYING_MODE`, which carries no value of its own when the radio is idle), so a repeat only asks for what is genuinely absent. The passes run as a background task started in `async_setup_entry`, which must not block setup for the full ~52 s worst case; the task is cancelled on unload.
+
+**Alternatives considered:**
+- A global minimum spacing inside `BuschRadioUDPClient` for every command — rejected: it would also delay user-triggered commands, making volume stepping feel sluggish, for a problem that only occurs on the two internal bursts.
+- Retrying forever until the device answers — rejected: a genuinely silent field (e.g. `ALL_STATION_INFO` on a radio with no presets stored) would keep a task alive for the lifetime of the entry. After the last pass the periodic poll takes over.
+
+**Consequences:** A device that answers promptly is fully initialised after roughly 1.6 s instead of immediately — imperceptible, since entities are unavailable until the answers arrive either way. Test runs neutralise both constants through an autouse fixture, otherwise every entry setup would hold the event loop for the entire retry schedule.
 
 ---
 
@@ -429,6 +443,7 @@ The release process follows the central `RELEASE_GUIDE.md` (HACS ZIP release, ve
 
 | Doc Version | Date | Changes |
 |-------------|------|---------|
+| 1.9.0 | September 2026 | New §2.5: query pacing and startup retries — the radio answers only the first query of a burst, which left `volume` unset and every UDP entity permanently unavailable |
 | 1.8.0 | September 2026 | §5.2: reconfigure flow for host/port with host-uniqueness and serial-identity guards; §2.2: listener registration is restored after a config-flow probe; §6.3: entry data no longer immutable; §5.2: reload is left to the update listener (double reload dropped answers and breaks in HA 2026.12) |
 | 1.7.0 | June 2026 | §4.2: read-only Station Presets sensor (state = count, `N_name`/`N_url` attributes); sensor platform now always loaded |
 | 1.6.0 | June 2026 | §4.1: UPnP/AUX input sources — selectable in `source_list`, active source detected from `PLAYING:UPNP`/`AUX`; UPnP streaming via HA DLNA (Issue #5) |
