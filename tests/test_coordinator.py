@@ -18,6 +18,157 @@ def make_coordinator(hass=None, client=None):
 
 
 # ===========================================================================
+# Startup queries – pacing and retries
+# ===========================================================================
+
+
+ALL_STARTUP_QUERIES = [
+    "INFO_BLOCK",
+    "ALL_STATION_INFO",
+    "POWER_STATUS",
+    "VOLUME",
+    "PLAYING_MODE",
+]
+
+
+def _sent(client):
+    return [c[0][0] for c in client.send_get.call_args_list]
+
+
+def _complete_state(coord):
+    """Put the coordinator into the state a fully answered startup produces."""
+    coord.serial_number = "78C40E33745C"
+    coord.station_list = [{"id": 1, "name": "Radio", "url": "http://x"}]
+    coord.power = True
+    coord.volume = 12
+    coord._playing_mode_known = True
+
+
+async def test_pending_startup_queries_lists_everything_when_nothing_arrived():
+    coord, _, _ = make_coordinator()
+    assert coord._pending_startup_queries() == ALL_STARTUP_QUERIES
+
+
+async def test_pending_startup_queries_empty_once_all_answers_are_in():
+    coord, _, _ = make_coordinator()
+    _complete_state(coord)
+    assert coord._pending_startup_queries() == []
+
+
+async def test_playing_mode_answer_is_recorded():
+    """PLAYING_MODE has no value of its own when the radio is idle."""
+    coord, _, _ = make_coordinator()
+    assert not coord._playing_mode_known
+    coord.handle_packet({"_parameter": "PLAYING_MODE", "MODE": "PLAYING STOPPED"})
+    assert coord._playing_mode_known
+    assert "PLAYING_MODE" not in coord._pending_startup_queries()
+
+
+async def test_send_paced_spaces_the_queries_out():
+    """Sending back to back is what the radio drops, so each send waits."""
+    coord, _, client = make_coordinator()
+    with patch(
+        "custom_components.busch_radio_inet.coordinator.QUERY_SPACING", 0.4
+    ), patch(
+        "custom_components.busch_radio_inet.coordinator.asyncio.sleep",
+        new=AsyncMock(),
+    ) as mock_sleep:
+        await coord._send_paced(["POWER_STATUS", "VOLUME", "PLAYING_MODE"])
+
+    assert _sent(client) == ["POWER_STATUS", "VOLUME", "PLAYING_MODE"]
+    # Three queries, two gaps – no needless wait before the first one.
+    assert mock_sleep.await_args_list == [((0.4,),), ((0.4,),)]
+
+
+async def test_startup_queries_first_pass_asks_for_everything():
+    coord, _, client = make_coordinator()
+    with patch(
+        "custom_components.busch_radio_inet.coordinator.STARTUP_RETRY_DELAYS", ()
+    ), patch(
+        "custom_components.busch_radio_inet.coordinator.asyncio.sleep", new=AsyncMock()
+    ):
+        await coord.async_run_startup_queries()
+
+    assert _sent(client) == ALL_STARTUP_QUERIES
+
+
+async def test_startup_queries_repeat_only_what_is_still_missing():
+    """The radio answers part of a pass; the next one must not re-ask for that."""
+    coord, _, client = make_coordinator()
+
+    async def answer_all_but_volume(parameter):
+        if parameter == "INFO_BLOCK":
+            coord.serial_number = "78C40E33745C"
+        elif parameter == "ALL_STATION_INFO":
+            coord.station_list = [{"id": 1, "name": "Radio", "url": "http://x"}]
+        elif parameter == "POWER_STATUS":
+            coord.power = False
+        elif parameter == "PLAYING_MODE":
+            coord._playing_mode_known = True
+        # VOLUME stays unanswered – the case that keeps is_ready False
+
+    client.send_get = AsyncMock(side_effect=answer_all_but_volume)
+
+    with patch(
+        "custom_components.busch_radio_inet.coordinator.STARTUP_RETRY_DELAYS", (2, 5)
+    ), patch(
+        "custom_components.busch_radio_inet.coordinator.asyncio.sleep", new=AsyncMock()
+    ):
+        await coord.async_run_startup_queries()
+
+    assert _sent(client) == ALL_STARTUP_QUERIES + ["VOLUME", "VOLUME"]
+
+
+async def test_startup_queries_stop_as_soon_as_the_state_is_complete():
+    coord, _, client = make_coordinator()
+
+    async def answer_everything(parameter):
+        _complete_state(coord)
+
+    client.send_get = AsyncMock(side_effect=answer_everything)
+
+    with patch(
+        "custom_components.busch_radio_inet.coordinator.STARTUP_RETRY_DELAYS", (2, 5, 15)
+    ), patch(
+        "custom_components.busch_radio_inet.coordinator.asyncio.sleep", new=AsyncMock()
+    ):
+        await coord.async_run_startup_queries()
+
+    # One pass only – no query is repeated after the answers are in.
+    assert _sent(client) == ALL_STARTUP_QUERIES
+
+
+async def test_startup_queries_wait_between_passes():
+    coord, _, client = make_coordinator()
+    with patch(
+        "custom_components.busch_radio_inet.coordinator.QUERY_SPACING", 0
+    ), patch(
+        "custom_components.busch_radio_inet.coordinator.STARTUP_RETRY_DELAYS", (2, 5)
+    ), patch(
+        "custom_components.busch_radio_inet.coordinator.asyncio.sleep", new=AsyncMock()
+    ) as mock_sleep:
+        await coord.async_run_startup_queries()
+
+    waits = [call[0][0] for call in mock_sleep.await_args_list]
+    assert 2 in waits and 5 in waits
+
+
+async def test_startup_queries_give_up_after_the_last_pass():
+    """An unresponsive device must not keep the task alive forever."""
+    coord, _, client = make_coordinator()
+    with patch(
+        "custom_components.busch_radio_inet.coordinator.STARTUP_RETRY_DELAYS", (2,)
+    ), patch(
+        "custom_components.busch_radio_inet.coordinator.asyncio.sleep", new=AsyncMock()
+    ):
+        await coord.async_run_startup_queries()
+
+    # Two passes, then it stops and leaves the rest to the fallback poll.
+    assert _sent(client) == ALL_STARTUP_QUERIES * 2
+    assert coord._pending_startup_queries() == ALL_STARTUP_QUERIES
+
+
+# ===========================================================================
 # Initial state
 # ===========================================================================
 

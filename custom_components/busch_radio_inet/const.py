@@ -20,6 +20,12 @@ MODEL = "8216 U"
 # Polling interval for fallback (seconds)
 POLL_INTERVAL = 300
 
+# The radio answers only the first of a burst of UDP queries and drops the rest,
+# and UDP has no retransmission — so queries are sent one at a time, this far
+# apart (seconds), and unanswered ones are repeated after the delays below.
+QUERY_SPACING = 0.4
+STARTUP_RETRY_DELAYS = (2, 5, 15, 30)
+
 # Timeout for config flow connection validation (seconds)
 CONNECT_TIMEOUT = 5
 

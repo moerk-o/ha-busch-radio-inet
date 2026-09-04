@@ -84,12 +84,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         on_notification=coordinator.handle_notification,
     )
 
-    # Send startup queries – responses arrive via the shared listener
-    await client.send_get("INFO_BLOCK")
-    await client.send_get("ALL_STATION_INFO")
-    await client.send_get("POWER_STATUS")
-    await client.send_get("VOLUME")
-    await client.send_get("PLAYING_MODE")
+    # Startup queries run in the background: they are spaced out and repeated
+    # (see BuschRadioCoordinator.async_run_startup_queries), which must not
+    # hold up setup.  Responses arrive via the shared listener.
+    startup_queries = hass.async_create_task(
+        coordinator.async_run_startup_queries()
+    )
 
     icy_enabled = entry.options.get(CONF_ICY_ENABLED, DEFAULT_ICY_ENABLED)
     icy_mode = entry.options.get(CONF_ICY_MODE, DEFAULT_ICY_MODE)
@@ -145,6 +145,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinator": coordinator,
         "client": client,
         "cancel_startup_icy": cancel_startup_icy,
+        "startup_queries": startup_queries,
         "http_coordinator": http_coordinator,
         "platforms": platforms,
         "host": host,
@@ -169,6 +170,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         data = hass.data[DOMAIN].pop(entry.entry_id)
         data["cancel_startup_icy"]()
+        data["startup_queries"].cancel()
         data["coordinator"].stop_polling()
         data["coordinator"].stop_icy()
         data["coordinator"].stop_artwork()

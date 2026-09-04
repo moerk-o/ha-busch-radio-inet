@@ -232,6 +232,12 @@ needed). At startup the entities stay `unavailable` until the radio first respon
 If the entities stay `unavailable` for good, check whether the radio's IP address has
 changed — see [Changing the IP Address](#changing-the-ip-address).
 
+A weak Wi-Fi signal also shows up here: the radio's control protocol is UDP, which has
+no retransmission, so lost requests simply go unanswered while the device's own web
+interface (TCP) still works normally. The integration spaces its requests out and
+repeats unanswered ones, but below roughly -85 dBm the radio may still take several
+attempts to report its state.
+
 ### Song/artist info not updating
 
 - Check that **Enable "Now Playing" metadata** is enabled in the integration options
