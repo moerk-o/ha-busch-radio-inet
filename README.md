@@ -210,8 +210,6 @@ are fetched from the radio over the local network and written back when changed.
 | Entity | Values | Description |
 |--------|--------|-------------|
 | `sensor.{name}_energy_mode` | `PREMIUM` / `ECO` | Current energy mode |
-| `sensor.{name}_switch_input` | raw value | Raw `sw` field from the device — meaning unconfirmed, **disabled by default** |
-| `sensor.{name}_mains_voltage` | raw value | Raw `sp` field from the device — meaning unconfirmed, **disabled by default** |
 | `button.{name}_refresh_settings` | – | Force re-read of all device settings from the radio |
 
 ## Troubleshooting

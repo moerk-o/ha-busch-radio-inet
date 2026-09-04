@@ -1,6 +1,6 @@
 # Technical Reference: Home Assistant Integration `busch_radio_inet`
 
-**Version:** 1.9.0
+**Version:** 1.12.0
 **Date:** September 2026
 **Target Platform:** Home Assistant Custom Integration
 **Development Language:** English (code, comments, variables)
@@ -224,7 +224,7 @@ Loaded only when `expose_http_settings` is enabled. All read from the `HttpSetti
 | **switch** | Audio World (`aw`), Daylight Saving (`sz`), Alarm (`ea`), Short Timer (`et`), Sleep Timer (`es`) |
 | **time** | Local Time (`hr`+`mi`), Alarm Time (`ah`+`am`) |
 | **button** | Refresh Settings, Sync Time from Home Assistant |
-| **sensor** | Switch Input (`sw`, read-only), Mains Voltage (`sp`, read-only), Energy Mode (UDP) |
+| **sensor** | Energy Mode (UDP) |
 
 **Switch semantics:** checkbox fields are `"1"` (on) / `""` (off).
 
@@ -232,7 +232,17 @@ Loaded only when `expose_http_settings` is enabled. All read from the `HttpSetti
 
 **Sync Time button:** writes `hr`, `mi` and `zs=1` (Manual) atomically — the device ignores `hr`/`mi` while Internet time sync is active, so manual mode must be set together with the time. The user can switch back to Internet sync via the Time Source select.
 
-**Read-only diagnostics:** `sw` ("Switch Input") and `sp` ("Mains Voltage") are exposed as read-only sensors (no writable entity). Their real meaning is **unconfirmed** — the device reports a value (observed: `4`) that matches neither originally assumed encoding (`sw`: 0/1/2, `sp`: 0/1), and both fields always carry the same value. No value mapping is applied (raw value shown) and both sensors are **disabled by default**. On settings writes they are written back unchanged like every other field (§6.4).
+**`sw` / `sp` (switch input) are deliberately not exposed as entities.** They are still written back unchanged on settings writes (§6.4) — see below for why both facts matter.
+
+**Decision:** The switch-input fields are read, written back verbatim, and shown to nobody.
+
+**Context:** The device's settings form offers the switch-input terminal as two radio-button groups — `sw` as the function (`0` Switch, `1` Push-button, `2` Automatic) and `sp` as the mains voltage at that input (`0` 110V, `1` 230V). `/radio.cfg` does not report them that way: it writes one combined value, **`voltage * 4 + function`**, into *both* fields. The test device reported `4` (230V + Switch) and later `6` (230V + Automatic). This matches the encoding table contributed in issue #8 in every row and was confirmed against the form's own HTML.
+
+**Why nothing is exposed:** The value is decodable, but the device's own web interface renders that form with the *first* option pre-selected whenever the stored value is outside a group's range — which the combined value always is. A user comparing Home Assistant against the radio's own page would therefore see two different answers and reasonably conclude that Home Assistant is the broken one. Two entities nobody can verify are worth less than none, especially for a setting that describes physical wiring.
+
+**Why the fields are still posted:** Omitting them is not the safe option. Stripping `sw`/`sp` from the POST made the device **reset them to default** on every settings write (see the superseded-decisions note in §6.4) — for an installation setting that would be the worst possible outcome. Posting the combined value back is demonstrably inert: the device ignores it as out of range for both groups, and the stored setting survives every write (observed across many writes at both `4` and `6`). Posting the *decoded* values instead would be formally closer to the form, but it would start actively writing a wiring setting on every brightness change in exchange for no benefit at all, since the setting is already preserved.
+
+**Consequences:** `sw` and `sp` must stay in `_VALUE_FIELDS`. The integration never offers the switch-input configuration for editing; the device's own web interface is the place to change it.
 
 ---
 
@@ -443,6 +453,7 @@ The release process follows the central `RELEASE_GUIDE.md` (HACS ZIP release, ve
 
 | Doc Version | Date | Changes |
 |-------------|------|---------|
+| 1.12.0 | September 2026 | §4.4: the `sw`/`sp` diagnostic sensors are removed — the encoding is understood (issue #8) but the device's own UI contradicts it; documented why the fields are still posted unchanged |
 | 1.9.0 | September 2026 | New §2.5: query pacing and startup retries — the radio answers only the first query of a burst, which left `volume` unset and every UDP entity permanently unavailable |
 | 1.8.0 | September 2026 | §5.2: reconfigure flow for host/port with host-uniqueness and serial-identity guards; §2.2: listener registration is restored after a config-flow probe; §6.3: entry data no longer immutable; §5.2: reload is left to the update listener (double reload dropped answers and breaks in HA 2026.12) |
 | 1.7.0 | June 2026 | §4.2: read-only Station Presets sensor (state = count, `N_name`/`N_url` attributes); sensor platform now always loaded |

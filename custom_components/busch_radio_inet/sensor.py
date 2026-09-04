@@ -6,7 +6,6 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import BuschRadioCoordinator
@@ -57,73 +56,6 @@ class BuschRadioEnergyModeSensor(SensorEntity):
 
 # ---------------------------------------------------------------------------
 # HTTP-based sensors (read from /radio.cfg via HttpSettingsCoordinator)
-# ---------------------------------------------------------------------------
-
-class _HttpSettingsSensor(CoordinatorEntity[HttpSettingsCoordinator], SensorEntity):
-    """Base class for read-only HTTP settings sensor entities."""
-
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_has_entity_name = True
-
-    _VALUE_TO_STATE: dict[str, str] = {}
-
-    def __init__(
-        self,
-        coordinator: HttpSettingsCoordinator,
-        entry: ConfigEntry,
-        key: str,
-        name: str,
-    ) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
-        self._key = key
-        self._attr_name = name
-        self._attr_unique_id = f"{entry.unique_id}_http_{key}"
-
-    @property
-    def available(self) -> bool:
-        return super().available and self.coordinator.data is not None
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(identifiers={(DOMAIN, self._entry.unique_id)})
-
-    @property
-    def native_value(self) -> str | None:
-        raw = self.coordinator.data.get(self._key)
-        if raw is None:
-            return None
-        return self._VALUE_TO_STATE.get(raw, raw)
-
-
-class SwitchInputSensor(_HttpSettingsSensor):
-    """Raw 'sw' field from /radio.cfg.
-
-    The device reports a value (observed: '4') that does not match the
-    originally assumed 0/1/2 encoding, so no value mapping is applied — the raw
-    value is shown. Meaning unconfirmed, therefore disabled by default.
-    """
-
-    _attr_entity_registry_enabled_default = False
-
-    def __init__(self, coordinator: HttpSettingsCoordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator, entry, "sw", "Switch Input")
-
-
-class MainsVoltageSensor(_HttpSettingsSensor):
-    """Raw 'sp' field from /radio.cfg.
-
-    The device reports a value (observed: '4') that does not match the
-    originally assumed 0/1 encoding, so no value mapping is applied — the raw
-    value is shown. Meaning unconfirmed, therefore disabled by default.
-    """
-
-    _attr_entity_registry_enabled_default = False
-
-    def __init__(self, coordinator: HttpSettingsCoordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator, entry, "sp", "Mains Voltage")
-
-
 # ---------------------------------------------------------------------------
 # Station presets (UDP, always available)
 # ---------------------------------------------------------------------------
@@ -204,10 +136,6 @@ async def async_setup_entry(
         BuschRadioStationPresetsSensor(coordinator, entry),
     ]
     if http_coordinator is not None:
-        entities += [
-            BuschRadioEnergyModeSensor(coordinator, entry),
-            SwitchInputSensor(http_coordinator, entry),
-            MainsVoltageSensor(http_coordinator, entry),
-        ]
+        entities.append(BuschRadioEnergyModeSensor(coordinator, entry))
 
     async_add_entities(entities)
