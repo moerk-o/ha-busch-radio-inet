@@ -5,6 +5,9 @@ asyncio_mode = "auto"
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
+markers = [
+    "real_setup_probe: run with the real setup probe instead of the stub",
+]
 
 # The pytest-homeassistant-custom-component plugin loads the integration from
 # tests/custom_components/, so coverage must measure that copy (kept in sync via
