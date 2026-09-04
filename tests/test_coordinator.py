@@ -192,13 +192,22 @@ def test_is_ready_false_before_data():
     assert coord.is_ready is False
 
 
-def test_is_ready_false_with_only_power():
+def test_is_ready_true_with_power_alone():
+    """A lost VOLUME answer must not keep the whole device unusable."""
     coord, _, _ = make_coordinator()
     coord.power = True
-    assert coord.is_ready is False
+    assert coord.is_ready is True
+
+
+def test_is_ready_true_when_powered_off():
+    """'Off' is a known state, not a missing one."""
+    coord, _, _ = make_coordinator()
+    coord.power = False
+    assert coord.is_ready is True
 
 
 def test_is_ready_false_with_only_volume():
+    """Volume alone says nothing about what the entity has to display."""
     coord, _, _ = make_coordinator()
     coord.volume = 10
     assert coord.is_ready is False

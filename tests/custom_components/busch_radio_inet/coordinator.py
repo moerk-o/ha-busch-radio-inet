@@ -62,8 +62,13 @@ class BuschRadioCoordinator:
 
     @property
     def is_ready(self) -> bool:
-        """True once we have received at least power state and volume."""
-        return self.power is not None and self.volume is not None
+        """True once the device has reported its power state.
+
+        Volume is deliberately not required: it arrives in its own UDP answer,
+        and nothing that decides what the entity shows depends on it — see
+        TECHNICAL_REFERENCE.md 3.1.
+        """
+        return self.power is not None
 
     @property
     def available(self) -> bool:

@@ -1,6 +1,6 @@
 # Technical Reference: Home Assistant Integration `busch_radio_inet`
 
-**Version:** 1.9.0
+**Version:** 1.11.0
 **Date:** September 2026
 **Target Platform:** Home Assistant Custom Integration
 **Development Language:** English (code, comments, variables)
@@ -123,7 +123,21 @@ The `BuschRadioUDPClient` (`udp_client.py`) is send-only: it opens a datagram en
 
 **Consequences:** Two different coordinator styles coexist (push for media, polling for HTTP settings — see §3.4 and §6.4). Entities must register/unregister their callback in `async_added_to_hass` / `async_will_remove_from_hass`.
 
-**Readiness / availability:** `is_ready` becomes true once both power and volume have been received. Entities are `available` only when `is_ready` **and** the device is reachable (`available = is_ready and self._reachable`). Reachability is verified in the fallback poll via a short HTTP GET to `/radio.cfg` (independent of the HTTP-settings feature, so it works even when those entities are disabled): a failed probe marks the device `unavailable`, stops the ICY stream and clears now-playing. The device recovers automatically on the next successful poll **or** as soon as any UDP packet arrives (`_mark_reachable()` in `handle_packet`). State maps to `OFF` / `IDLE` (powered, no station) / `PLAYING` (station active).
+**Readiness / availability:** `is_ready` becomes true once the device has reported its **power state**. Entities are `available` only when `is_ready` **and** the device is reachable (`available = is_ready and self._reachable`). Reachability is verified in the fallback poll via a short HTTP GET to `/radio.cfg` (independent of the HTTP-settings feature, so it works even when those entities are disabled): a failed probe marks the device `unavailable`, stops the ICY stream and clears now-playing. The device recovers automatically on the next successful poll **or** as soon as any UDP packet arrives (`_mark_reachable()` in `handle_packet`). State maps to `OFF` / `IDLE` (powered, no station) / `PLAYING` (station active).
+
+#### Why readiness does not require the volume
+
+**Decision:** `is_ready` depends on the power state alone. It used to require power **and** volume.
+
+**Context:** Power and volume arrive in two independent UDP answers. Requiring both meant either one going missing left every UDP entity `unavailable` — the media player included, even though everything needed to render it had already arrived. That is not hypothetical: on a device with a weak WLAN link the `VOLUME` answer was the one consistently lost (§2.5), and the radio stayed unusable in Home Assistant while it was in fact reachable and would have shown its power state correctly.
+
+**Why this approach:** Nothing that decides what the entity *displays* uses the volume. `state` is derived from `power`, `station_name` and `input_source`; `volume_level` already returns `None` for an unknown volume, which is Home Assistant's documented contract for that property. Requiring a second, independent answer therefore bought no correctness — it only squared the probability of staying dark (with a per-answer arrival probability *p*, readiness had probability *p²*).
+
+**Alternatives considered:**
+- Keep requiring both — rejected: couples an attribute nothing depends on to the availability of the whole device.
+- Drop the data condition entirely (`available = self._reachable`) — closer to Home Assistant's convention that availability answers "can I reach the device". Not taken: the entity would briefly be available with an unknown state, and the gain over requiring the single answer that determines the state is small.
+
+**Consequences:** Right after setup the volume can be unknown for the moment until its answer arrives, so the volume control has no value to show. The station-presets sensor reports `len(station_list)`, i.e. **0** rather than "unknown", while `ALL_STATION_INFO` is still outstanding — a window that already existed (readiness never covered the station list) and that this decision widens slightly.
 
 ### 3.2 ICY Now-Playing Metadata
 
@@ -443,6 +457,7 @@ The release process follows the central `RELEASE_GUIDE.md` (HACS ZIP release, ve
 
 | Doc Version | Date | Changes |
 |-------------|------|---------|
+| 1.11.0 | September 2026 | §3.1: readiness no longer requires the volume — a lost `VOLUME` answer used to leave every UDP entity unavailable although nothing displayed depends on it |
 | 1.9.0 | September 2026 | New §2.5: query pacing and startup retries — the radio answers only the first query of a burst, which left `volume` unset and every UDP entity permanently unavailable |
 | 1.8.0 | September 2026 | §5.2: reconfigure flow for host/port with host-uniqueness and serial-identity guards; §2.2: listener registration is restored after a config-flow probe; §6.3: entry data no longer immutable; §5.2: reload is left to the update listener (double reload dropped answers and breaks in HA 2026.12) |
 | 1.7.0 | June 2026 | §4.2: read-only Station Presets sensor (state = count, `N_name`/`N_url` attributes); sensor platform now always loaded |
