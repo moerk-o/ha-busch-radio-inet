@@ -7,7 +7,7 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
@@ -102,7 +102,8 @@ async def validate_connection(hass, host: str, port: int) -> dict:
     Raises CannotConnect on timeout or socket error.
 
     If a SharedUDPListener is already running (another device is configured),
-    it is reused for validation to avoid a second bind on port 4242.
+    it is reused for validation to avoid a second bind on port 4242.  Any
+    registration that already exists for the host is restored afterwards.
     """
     loop = asyncio.get_running_loop()
     future: asyncio.Future = loop.create_future()
@@ -115,14 +116,18 @@ async def validate_connection(hass, host: str, port: int) -> dict:
             if "SERNO" in fields and not future.done():
                 future.set_result(fields)
 
-        shared_listener.register(host, on_packet, client)
+        # The host may already belong to a loaded entry (reconfigure re-probing
+        # its own device).  register() returns an undo callable that restores
+        # the previous registration, so probing never leaves a live device
+        # without a packet route.
+        undo_register = shared_listener.register(host, on_packet, client)
         try:
             await client.send_get("INFO_BLOCK")
             return await asyncio.wait_for(future, timeout=CONNECT_TIMEOUT)
         except asyncio.TimeoutError as exc:
             raise CannotConnect from exc
         finally:
-            shared_listener.unregister(host)
+            undo_register()
     else:
         transport = None
         try:
@@ -185,6 +190,80 @@ class BuschRadioINetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=schema,
             errors=errors,
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Update the connection details of an existing entry.
+
+        Needed when the radio's IP address changes (e.g. a new DHCP lease):
+        host and port live in the entry data, so the options flow cannot
+        change them and the entry would otherwise have to be deleted and
+        re-created, losing the entity history.
+        """
+        entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            host = user_input[CONF_HOST]
+            port = user_input[CONF_PORT]
+
+            if self._host_taken_by_other_entry(entry.entry_id, host):
+                errors["base"] = "already_configured"
+            else:
+                try:
+                    info = await validate_connection(self.hass, host, port)
+                except CannotConnect:
+                    errors["base"] = "cannot_connect"
+                else:
+                    # The serial is the entry's unique id: refuse to point an
+                    # entry at a different radio, which would silently attach
+                    # its entities and history to the wrong device.
+                    await self.async_set_unique_id(info.get("SERNO", ""))
+                    self._abort_if_unique_id_mismatch(reason="wrong_device")
+
+                    # Deliberately not async_update_reload_and_abort(): that
+                    # schedules a reload on top of the one the entry's update
+                    # listener already performs.  Reloading twice tears the UDP
+                    # listener down again ~20 ms after the startup queries went
+                    # out, so their answers arrive at a closed socket and the
+                    # device stays unavailable until the next fallback poll.
+                    # Home Assistant warns about the double reload and drops
+                    # support for it in 2026.12.
+                    self.hass.config_entries.async_update_entry(
+                        entry,
+                        data=entry.data | {CONF_HOST: host, CONF_PORT: port},
+                    )
+                    if entry.state is not ConfigEntryState.LOADED:
+                        # An entry that is not loaded (failed setup, disabled)
+                        # has no update listener registered, so nothing would
+                        # pick up the new address.
+                        self.hass.config_entries.async_schedule_reload(
+                            entry.entry_id
+                        )
+                    return self.async_abort(reason="reconfigure_successful")
+
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_HOST): str,
+                vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
+            }
+        )
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=self.add_suggested_values_to_schema(
+                schema, user_input or entry.data
+            ),
+            errors=errors,
+            description_placeholders={"device": entry.title},
+        )
+
+    def _host_taken_by_other_entry(self, entry_id: str, host: str) -> bool:
+        """Return True if another config entry already uses this host."""
+        return any(
+            other.entry_id != entry_id and other.data.get(CONF_HOST) == host
+            for other in self.hass.config_entries.async_entries(DOMAIN)
         )
 
     @staticmethod

@@ -13,7 +13,14 @@ from datetime import timedelta
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_track_time_interval
 
-from .const import POLL_INTERVAL
+from .const import (
+    POLL_INTERVAL,
+    PROBE_ATTEMPTS,
+    PROBE_RETRY_DELAY,
+    PROBE_TIMEOUT,
+    QUERY_SPACING,
+    STARTUP_RETRY_DELAYS,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,6 +49,17 @@ class BuschRadioCoordinator:
         self.mac_address: str | None = None
         self.energy_mode: str | None = None
 
+        # Set by the first packet of any kind – the setup probe waits on it.
+        self._packet_received = asyncio.Event()
+
+        # An empty station list is a valid answer (a radio with no presets
+        # stored), so "answered" cannot be derived from the list itself.
+        self._station_list_known: bool = False
+
+        # PLAYING_MODE has no field of its own that survives an "idle" answer,
+        # so completion of that query is tracked explicitly.
+        self._playing_mode_known: bool = False
+
         self._reachable: bool = True  # set False when the device stops answering
         self._reachability_client = None  # set via set_reachability_client()
 
@@ -58,13 +76,23 @@ class BuschRadioCoordinator:
 
     @property
     def is_ready(self) -> bool:
-        """True once we have received at least power state and volume."""
-        return self.power is not None and self.volume is not None
+        """True once the device has reported its power state.
+
+        Volume is deliberately not required: it arrives in its own UDP answer,
+        and nothing that decides what the entity shows depends on it — see
+        TECHNICAL_REFERENCE.md 3.1.
+        """
+        return self.power is not None
 
     @property
     def available(self) -> bool:
         """True when initialised and the device is currently reachable."""
         return self.is_ready and self._reachable
+
+    @property
+    def station_list_known(self) -> bool:
+        """True once the device has answered ALL_STATION_INFO."""
+        return self._station_list_known
 
     def set_reachability_client(self, client) -> None:
         """Attach the HTTP client used by the fallback poll to verify reachability."""
@@ -111,6 +139,9 @@ class BuschRadioCoordinator:
 
         Called by the listener for every non-NOTIFICATION packet.
         """
+        # Even a NACK proves the device is alive, which is all the probe asks.
+        self._packet_received.set()
+
         if fields.get("RESPONSE") == "NACK":
             _LOGGER.debug(
                 "[%s] Received NACK for command '%s', ignoring",
@@ -187,6 +218,9 @@ class BuschRadioCoordinator:
             self._enter_input_source("AUX")
             changed = True
 
+        if playing is not None or "MODE" in fields:
+            self._playing_mode_known = True
+
         # --- Playing mode: stopped ---
         if fields.get("MODE") == "PLAYING STOPPED":
             if (
@@ -201,6 +235,7 @@ class BuschRadioCoordinator:
 
         # --- Station list (ALL_STATION_INFO) ---
         if "_stations" in fields:
+            self._station_list_known = True
             new_list = fields["_stations"]
             if self.station_list != new_list:
                 self.station_list = new_list
@@ -390,6 +425,103 @@ class BuschRadioCoordinator:
             cb()
 
     # ------------------------------------------------------------------
+    # Startup queries
+    # ------------------------------------------------------------------
+
+    async def async_probe_device(self) -> bool:
+        """Return True once the device answers, False if it stays silent.
+
+        Setup uses this to fail with ConfigEntryNotReady instead of creating
+        entities that could only ever be unavailable.  UDP has no
+        retransmission, so a single lost answer must not condemn a healthy
+        device — the query is repeated up to PROBE_ATTEMPTS times.
+        """
+        for attempt in range(PROBE_ATTEMPTS):
+            if attempt:
+                await asyncio.sleep(PROBE_RETRY_DELAY)
+
+            await self._client.send_get("INFO_BLOCK")
+            try:
+                await asyncio.wait_for(
+                    self._packet_received.wait(), timeout=PROBE_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                _LOGGER.debug(
+                    "[%s] Setup probe: no answer (attempt %d/%d)",
+                    self._host,
+                    attempt + 1,
+                    PROBE_ATTEMPTS,
+                )
+                continue
+            return True
+
+        return False
+
+    async def _send_paced(self, parameters: list[str]) -> None:
+        """Send GET queries one at a time, QUERY_SPACING apart.
+
+        Sending them back to back loses all but the first — see
+        async_run_startup_queries().
+        """
+        for index, parameter in enumerate(parameters):
+            if index:
+                await asyncio.sleep(QUERY_SPACING)
+            await self._client.send_get(parameter)
+
+    def _pending_startup_queries(self) -> list[str]:
+        """Return the startup queries whose answer has not arrived yet."""
+        pending = []
+        if self.serial_number is None:
+            pending.append("INFO_BLOCK")
+        if not self._station_list_known:
+            pending.append("ALL_STATION_INFO")
+        if self.power is None:
+            pending.append("POWER_STATUS")
+        if self.volume is None:
+            pending.append("VOLUME")
+        if not self._playing_mode_known:
+            pending.append("PLAYING_MODE")
+        return pending
+
+    async def async_run_startup_queries(self) -> None:
+        """Ask the device for its initial state, pacing and repeating requests.
+
+        The radio answers only the first query of a burst and silently drops
+        the rest; UDP has no retransmission, so a dropped query is lost for
+        good.  Until both power and volume have arrived the coordinator is not
+        ready and every entity stays unavailable, so the queries are spaced out
+        and whatever is still missing is asked again a few times.  Anything
+        still unanswered after that is left to the fallback poll.
+        """
+        for attempt, delay in enumerate((0, *STARTUP_RETRY_DELAYS)):
+            if delay:
+                await asyncio.sleep(delay)
+
+            pending = self._pending_startup_queries()
+            if not pending:
+                if attempt:
+                    _LOGGER.debug(
+                        "[%s] Startup state complete after pass %d",
+                        self._host,
+                        attempt,
+                    )
+                return
+
+            _LOGGER.debug(
+                "[%s] Startup queries, pass %d: %s",
+                self._host,
+                attempt + 1,
+                ", ".join(pending),
+            )
+            await self._send_paced(pending)
+
+        _LOGGER.debug(
+            "[%s] Startup queries exhausted, still missing: %s",
+            self._host,
+            ", ".join(self._pending_startup_queries()) or "nothing",
+        )
+
+    # ------------------------------------------------------------------
     # Reachability
     # ------------------------------------------------------------------
 
@@ -430,6 +562,4 @@ class BuschRadioCoordinator:
             self._mark_reachable()
 
         _LOGGER.debug("[%s] Fallback poll: refreshing device state", self._host)
-        await self._client.send_get("POWER_STATUS")
-        await self._client.send_get("VOLUME")
-        await self._client.send_get("PLAYING_MODE")
+        await self._send_paced(["POWER_STATUS", "VOLUME", "PLAYING_MODE"])

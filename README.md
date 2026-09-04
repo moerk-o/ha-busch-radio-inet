@@ -102,6 +102,17 @@ After setup, open the integration options to configure:
 | **Expose device settings as HA entities** | disabled | Create additional entities for device settings |
 | **Settings poll interval (minutes)** | 5 min | How often to read settings from the device (1–60 min) |
 
+### Changing the IP Address
+
+If the radio's address changes — a new DHCP lease, for example — the entry does not
+have to be deleted and set up again. Open the integration entry's ⋮ menu and choose
+**Reconfigure**, then enter the new host (and port, if needed). All entities and their
+history are kept.
+
+Home Assistant checks that the radio at the new address reports the same serial number
+the entry was created with, so an entry cannot be attached to a different radio by
+mistake.
+
 ## Entities
 
 ### Media Player (`media_player.{name}`)
@@ -135,7 +146,8 @@ the actual streaming is handled by Home Assistant's DLNA support.
 A read-only sensor that exposes the radio's 8 station preset slots, handy for
 building a custom dashboard card.
 
-- **State:** number of occupied presets (e.g. `6`)
+- **State:** number of occupied presets (e.g. `6`) — `unavailable` until the radio has
+  reported its preset list, so `0` always means "no presets stored".
 - **Attributes:** `1_name` / `1_url` … `8_name` / `8_url` — one pair per slot;
   empty slots have empty strings.
 
@@ -199,8 +211,6 @@ are fetched from the radio over the local network and written back when changed.
 | Entity | Values | Description |
 |--------|--------|-------------|
 | `sensor.{name}_energy_mode` | `PREMIUM` / `ECO` | Current energy mode |
-| `sensor.{name}_switch_input` | raw value | Raw `sw` field from the device — meaning unconfirmed, **disabled by default** |
-| `sensor.{name}_mains_voltage` | raw value | Raw `sp` field from the device — meaning unconfirmed, **disabled by default** |
 | `button.{name}_refresh_settings` | – | Force re-read of all device settings from the radio |
 
 ## Troubleshooting
@@ -213,10 +223,24 @@ are fetched from the radio over the local network and written back when changed.
 
 ### Entity shows `unavailable`
 
-The integration marks the device **unavailable** when it stops responding — powered off at
+If the radio does not answer while Home Assistant is starting up, the integration
+reports **"Retrying setup"** on the integration entry instead of silently creating
+entities that cannot work. Home Assistant then keeps retrying on its own, and the entry
+recovers as soon as the radio answers.
+
+During operation the integration marks the device **unavailable** when it stops responding — powered off at
 the socket, network outage, or a device crash. Reachability is re-checked at least every
 5 minutes, and the device **recovers automatically** once it is back online (no reload
 needed). At startup the entities stay `unavailable` until the radio first responds.
+
+If the entities stay `unavailable` for good, check whether the radio's IP address has
+changed — see [Changing the IP Address](#changing-the-ip-address).
+
+A weak Wi-Fi signal also shows up here: the radio's control protocol is UDP, which has
+no retransmission, so lost requests simply go unanswered while the device's own web
+interface (TCP) still works normally. The integration spaces its requests out and
+repeats unanswered ones, but below roughly -85 dBm the radio may still take several
+attempts to report its state.
 
 ### Song/artist info not updating
 

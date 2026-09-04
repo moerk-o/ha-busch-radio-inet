@@ -144,10 +144,26 @@ class SharedUDPListener:
         on_packet: Callable[[dict], None],
         client,
         on_notification: Callable[[str], None] | None = None,
-    ) -> None:
-        """Register a device coordinator for the given host IP."""
+    ) -> Callable[[], None]:
+        """Register a device coordinator for the given host IP.
+
+        Returns a callable that undoes this registration, restoring whatever
+        was registered for the host before.  The config flow probes a device
+        by registering temporarily and must not tear down the registration of
+        an already loaded entry using the same host (see validate_connection()).
+        """
+        previous = self._devices.get(host)
         self._devices[host] = (on_packet, on_notification, client)
         _LOGGER.debug("Registered device %s (total: %d)", host, len(self._devices))
+
+        def _undo() -> None:
+            if previous is None:
+                self.unregister(host)
+            else:
+                self._devices[host] = previous
+                _LOGGER.debug("Restored previous registration for %s", host)
+
+        return _undo
 
     def unregister(self, host: str) -> None:
         """Unregister a device coordinator."""

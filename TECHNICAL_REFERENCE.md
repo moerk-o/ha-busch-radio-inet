@@ -1,7 +1,7 @@
 # Technical Reference: Home Assistant Integration `busch_radio_inet`
 
-**Version:** 1.7.0
-**Date:** June 2026
+**Version:** 1.12.0
+**Date:** September 2026
 **Target Platform:** Home Assistant Custom Integration
 **Development Language:** English (code, comments, variables)
 **Repository:** https://github.com/moerk-o/ha-busch-radio-inet
@@ -58,7 +58,7 @@ COMMAND:PLAY\r\n<parameter>\r\nID:HA\r\n\r\n    # start a station
 
 Every command carries `ID:HA` as a sender tag. Responses echo this field, so the listener and parser deliberately drop the `ID:HA` echo line to avoid colliding with the station `ID` field used in `PLAYING_MODE` responses (see `parse_packet()` in `udp_listener.py`).
 
-**Startup queries** (sent on every setup, answered asynchronously via the listener): `INFO_BLOCK`, `ALL_STATION_INFO`, `POWER_STATUS`, `VOLUME`, `PLAYING_MODE`.
+**Startup queries** (sent on every setup, answered asynchronously via the listener): `INFO_BLOCK`, `ALL_STATION_INFO`, `POWER_STATUS`, `VOLUME`, `PLAYING_MODE`. They are paced and repeated — see §2.5.
 
 **Notification → follow-up GET pattern:** Unsolicited `NOTIFICATION` packets (e.g. `VOLUME_CHANGED`, `STATION_CHANGED`, `URL_IS_PLAYING`, `POWER_ON`, `POWER_OFF`) do not contain the new value. The listener reacts by sending the matching `GET` (e.g. `VOLUME_CHANGED → GET VOLUME`) and additionally forwards the raw event name to the coordinator for higher-level reactions (ICY start/stop, artwork clearing).
 
@@ -68,7 +68,7 @@ Every command carries `ID:HA` as a sender tag. Responses echo this field, so the
 
 **Context:** Port 4242 can only be bound once per host. The integration supports multiple radios (each its own config entry), so a per-entry listener would conflict on the second device. The device's source IP uniquely identifies which radio a packet came from.
 
-**Why this approach:** One bind, N devices. The listener keeps a `host → (on_packet, on_notification, client)` registry and dispatches per datagram. Lifecycle is reference-counted via `has_devices`. The config-flow validation reuses the running listener when one already exists, instead of opening a second socket (see `validate_connection()` in `config_flow.py`).
+**Why this approach:** One bind, N devices. The listener keeps a `host → (on_packet, on_notification, client)` registry and dispatches per datagram. Lifecycle is reference-counted via `has_devices`. The config-flow validation reuses the running listener when one already exists, instead of opening a second socket (see `validate_connection()` in `config_flow.py`). Because a probe may target a host that a loaded entry already owns (reconfigure re-checking its own radio), `register()` returns an undo callable that restores the previous registration — a plain `unregister()` would leave the live device without a packet route until the next reload.
 
 **Alternatives considered:**
 - One listener socket per config entry — rejected: second device fails to bind 4242.
@@ -90,6 +90,36 @@ Every command carries `ID:HA` as a sender tag. Responses echo this field, so the
 
 The `BuschRadioUDPClient` (`udp_client.py`) is send-only: it opens a datagram endpoint, sends, and closes. It has **no receive socket** — all responses arrive through the shared listener. This keeps command sending stateless and avoids a second socket competing for port 4242.
 
+### 2.5 Query Pacing and Startup Retries
+
+**Decision:** GET queries are never sent back to back. They go out one at a time, `QUERY_SPACING` (0.4 s) apart, and the startup set is repeated for whatever is still unanswered after `STARTUP_RETRY_DELAYS` (2 s, 5 s, 15 s, 30 s).
+
+**Context:** The five startup queries used to be sent in an uninterrupted burst, microseconds apart. Captured against a real device (firmware 03.12, WLAN at -87 to -92 dBm), the radio answered only the **first** query of each burst and silently dropped the rest — over four observed rounds the first position was answered 4/4 times, the following positions 3/16. A single query on its own was answered every time. Because `VOLUME` sits at position 4, it was never answered at all, `is_ready` (which needs power **and** volume, §3.1) never turned true, and every UDP entity stayed `unavailable` indefinitely. The fallback poll made it worse rather than better: it sent its own three-query burst, so `VOLUME` at position 2 kept being dropped.
+
+**Why this approach:** The device is a small embedded controller that appears to drop requests arriving while it is still answering the previous one, so spacing addresses the cause directly. On top of that, UDP has no retransmission and the client is fire-and-forget (§2.4) — a lost query is lost for good — so unanswered queries have to be repeated explicitly. `_pending_startup_queries()` derives what is missing from the coordinator state itself (`serial_number`, `station_list`, `power`, `volume`, plus a `_playing_mode_known` flag for `PLAYING_MODE`, which carries no value of its own when the radio is idle), so a repeat only asks for what is genuinely absent. The passes run as a background task started in `async_setup_entry`, which must not block setup for the full ~52 s worst case; the task is cancelled on unload.
+
+**Alternatives considered:**
+- A global minimum spacing inside `BuschRadioUDPClient` for every command — rejected: it would also delay user-triggered commands, making volume stepping feel sluggish, for a problem that only occurs on the two internal bursts.
+- Retrying forever until the device answers — rejected: a genuinely silent field (e.g. `ALL_STATION_INFO` on a radio with no presets stored) would keep a task alive for the lifetime of the entry. After the last pass the periodic poll takes over.
+
+**Consequences:** A device that answers promptly is fully initialised after roughly 1.6 s instead of immediately — imperceptible, since entities are unavailable until the answers arrive either way. Test runs neutralise both constants through an autouse fixture, otherwise every entry setup would hold the event loop for the entire retry schedule.
+
+### 2.6 Setup Probe
+
+**Decision:** `async_setup_entry` sends a `GET INFO_BLOCK` and raises `ConfigEntryNotReady` when the device does not answer within `PROBE_TIMEOUT` (2 s) across `PROBE_ATTEMPTS` (3) tries.
+
+**Context:** Setup previously always succeeded. UDP is fire-and-forget (§2.4), so nothing in the setup path could tell a working radio from an absent one — the queries went out and, if the device was gone, no answer ever came. The entry looked healthy in the UI while every entity sat at `unavailable` with nothing explaining why. A radio that had been given a new IP address produced exactly this: silent, permanent, unexplained.
+
+**Why this approach:** Failing setup is what puts the entry into Home Assistant's "retrying setup" state, which is visible in the UI and retried with a growing backoff until the device answers. The probe deliberately uses **UDP**, not the HTTP settings interface: the two channels are independent, and a device whose web server answers while its control channel is dead is a real state — observed on the test device, where `/radio.cfg` and the settings form worked normally while the UDP path was answering almost nothing. An HTTP probe would have reported that radio as healthy and reproduced the very failure this is meant to surface.
+
+Because UDP has no retransmission, one lost answer must not condemn a healthy device, so the query is repeated up to three times. Observation backs the retry budget: single queries were answered every time even at -90 dBm, in 120–450 ms; only queries inside a burst were lost (§2.5). The worst case is ~7 s, below the 10 s at which Home Assistant starts warning about slow setups.
+
+**Alternatives considered:**
+- HTTP probe against `/radio.cfg` (`async_is_reachable()`, already used by the fallback poll) — rejected for the reason above. It stays in use for *runtime* reachability, where its TCP retransmission is an advantage.
+- Waiting for the first startup pass to complete instead of a dedicated probe — rejected: it ties setup duration to the full retry schedule (~52 s).
+
+**Consequences:** A failed attempt must not leak its registration, since Home Assistant retries setup: `_release_listener()` unregisters the device and closes the shared socket when no device is left, and is used by the unload path as well. The probe's answer also populates `serial_number`, so the first startup pass skips `INFO_BLOCK` (§2.5). Tests stub the probe through an autouse fixture; the ones covering it carry the `real_setup_probe` marker.
+
 ---
 
 ## 3. Core Logic
@@ -109,7 +139,21 @@ The `BuschRadioUDPClient` (`udp_client.py`) is send-only: it opens a datagram en
 
 **Consequences:** Two different coordinator styles coexist (push for media, polling for HTTP settings — see §3.4 and §6.4). Entities must register/unregister their callback in `async_added_to_hass` / `async_will_remove_from_hass`.
 
-**Readiness / availability:** `is_ready` becomes true once both power and volume have been received. Entities are `available` only when `is_ready` **and** the device is reachable (`available = is_ready and self._reachable`). Reachability is verified in the fallback poll via a short HTTP GET to `/radio.cfg` (independent of the HTTP-settings feature, so it works even when those entities are disabled): a failed probe marks the device `unavailable`, stops the ICY stream and clears now-playing. The device recovers automatically on the next successful poll **or** as soon as any UDP packet arrives (`_mark_reachable()` in `handle_packet`). State maps to `OFF` / `IDLE` (powered, no station) / `PLAYING` (station active).
+**Readiness / availability:** the device is known to be present before any of this — setup fails outright if it does not answer (§2.6). `is_ready` becomes true once the device has reported its **power state**. Entities are `available` only when `is_ready` **and** the device is reachable (`available = is_ready and self._reachable`). Reachability is verified in the fallback poll via a short HTTP GET to `/radio.cfg` (independent of the HTTP-settings feature, so it works even when those entities are disabled): a failed probe marks the device `unavailable`, stops the ICY stream and clears now-playing. The device recovers automatically on the next successful poll **or** as soon as any UDP packet arrives (`_mark_reachable()` in `handle_packet`). State maps to `OFF` / `IDLE` (powered, no station) / `PLAYING` (station active).
+
+#### Why readiness does not require the volume
+
+**Decision:** `is_ready` depends on the power state alone. It used to require power **and** volume.
+
+**Context:** Power and volume arrive in two independent UDP answers. Requiring both meant either one going missing left every UDP entity `unavailable` — the media player included, even though everything needed to render it had already arrived. That is not hypothetical: on a device with a weak WLAN link the `VOLUME` answer was the one consistently lost (§2.5), and the radio stayed unusable in Home Assistant while it was in fact reachable and would have shown its power state correctly.
+
+**Why this approach:** Nothing that decides what the entity *displays* uses the volume. `state` is derived from `power`, `station_name` and `input_source`; `volume_level` already returns `None` for an unknown volume, which is Home Assistant's documented contract for that property. Requiring a second, independent answer therefore bought no correctness — it only squared the probability of staying dark (with a per-answer arrival probability *p*, readiness had probability *p²*).
+
+**Alternatives considered:**
+- Keep requiring both — rejected: couples an attribute nothing depends on to the availability of the whole device.
+- Drop the data condition entirely (`available = self._reachable`) — closer to Home Assistant's convention that availability answers "can I reach the device". Not taken: the entity would briefly be available with an unknown state, and the gain over requiring the single answer that determines the state is small.
+
+**Consequences:** Right after setup the volume can be unknown for the moment until its answer arrives, so the volume control has no value to show. The station-presets sensor needed its own availability rule (§4.2): it counts the station list, so while `ALL_STATION_INFO` was outstanding it reported **0** — indistinguishable from a radio that genuinely has no presets stored. That window existed before this change too (readiness never covered the station list) and is now closed.
 
 ### 3.2 ICY Now-Playing Metadata
 
@@ -195,6 +239,13 @@ presets; **attributes** `1_name`/`1_url` … `8_name`/`8_url` give every slot
 the state and the labels from the names. Read-only — writing presets is not
 supported (separate device mechanism, not implemented).
 
+The sensor is **unavailable until an `ALL_STATION_INFO` answer has actually
+arrived**, tracked by `station_list_known` rather than by the list being
+non-empty: an empty list is a valid answer from a radio with no presets
+stored, and the state (a count) cannot express "not known yet" on its own.
+The same flag tells `_pending_startup_queries()` (§2.5) whether the query
+still needs repeating, so a radio without presets is not asked again in vain.
+
 ### 4.3 Energy Mode Sensor (with HTTP settings)
 
 `BuschRadioEnergyModeSensor` — diagnostic sensor exposing `energy_mode` (PREMIUM / ECO). Its data comes from UDP `POWER_STATUS`, **not** HTTP, but it is registered together with the HTTP diagnostic sensors and so appears only when `expose_http_settings` is on.
@@ -210,7 +261,7 @@ Loaded only when `expose_http_settings` is enabled. All read from the `HttpSetti
 | **switch** | Audio World (`aw`), Daylight Saving (`sz`), Alarm (`ea`), Short Timer (`et`), Sleep Timer (`es`) |
 | **time** | Local Time (`hr`+`mi`), Alarm Time (`ah`+`am`) |
 | **button** | Refresh Settings, Sync Time from Home Assistant |
-| **sensor** | Switch Input (`sw`, read-only), Mains Voltage (`sp`, read-only), Energy Mode (UDP) |
+| **sensor** | Energy Mode (UDP) |
 
 **Switch semantics:** checkbox fields are `"1"` (on) / `""` (off).
 
@@ -218,7 +269,17 @@ Loaded only when `expose_http_settings` is enabled. All read from the `HttpSetti
 
 **Sync Time button:** writes `hr`, `mi` and `zs=1` (Manual) atomically — the device ignores `hr`/`mi` while Internet time sync is active, so manual mode must be set together with the time. The user can switch back to Internet sync via the Time Source select.
 
-**Read-only diagnostics:** `sw` ("Switch Input") and `sp` ("Mains Voltage") are exposed as read-only sensors (no writable entity). Their real meaning is **unconfirmed** — the device reports a value (observed: `4`) that matches neither originally assumed encoding (`sw`: 0/1/2, `sp`: 0/1), and both fields always carry the same value. No value mapping is applied (raw value shown) and both sensors are **disabled by default**. On settings writes they are written back unchanged like every other field (§6.4).
+**`sw` / `sp` (switch input) are deliberately not exposed as entities.** They are still written back unchanged on settings writes (§6.4) — see below for why both facts matter.
+
+**Decision:** The switch-input fields are read, written back verbatim, and shown to nobody.
+
+**Context:** The device's settings form offers the switch-input terminal as two radio-button groups — `sw` as the function (`0` Switch, `1` Push-button, `2` Automatic) and `sp` as the mains voltage at that input (`0` 110V, `1` 230V). `/radio.cfg` does not report them that way: it writes one combined value, **`voltage * 4 + function`**, into *both* fields. The test device reported `4` (230V + Switch) and later `6` (230V + Automatic). This matches the encoding table contributed in issue #8 in every row and was confirmed against the form's own HTML.
+
+**Why nothing is exposed:** The value is decodable, but the device's own web interface renders that form with the *first* option pre-selected whenever the stored value is outside a group's range — which the combined value always is. A user comparing Home Assistant against the radio's own page would therefore see two different answers and reasonably conclude that Home Assistant is the broken one. Two entities nobody can verify are worth less than none, especially for a setting that describes physical wiring.
+
+**Why the fields are still posted:** Omitting them is not the safe option. Stripping `sw`/`sp` from the POST made the device **reset them to default** on every settings write (see the superseded-decisions note in §6.4) — for an installation setting that would be the worst possible outcome. Posting the combined value back is demonstrably inert: the device ignores it as out of range for both groups, and the stored setting survives every write (observed across many writes at both `4` and `6`). Posting the *decoded* values instead would be formally closer to the form, but it would start actively writing a wiring setting on every brightness change in exchange for no benefit at all, since the setting is already preserved.
+
+**Consequences:** `sw` and `sp` must stay in `_VALUE_FIELDS`. The integration never offers the switch-input configuration for editing; the device's own web interface is the place to change it.
 
 ---
 
@@ -234,7 +295,32 @@ A single-step user flow (`async_step_user`) collects **Host**, **Port** (default
 
 The default name auto-increments for additional devices ("Busch-Radio iNet", "Busch-Radio iNet 2", …).
 
-### 5.2 Options Flow
+### 5.2 Reconfigure Flow
+
+**Decision:** Connection details are changed through `async_step_reconfigure`, not through the options flow.
+
+**Context:** `host` and `port` live in the entry `data`, which the options flow cannot write. When a radio got a new DHCP lease the entry had to be deleted and re-created, which discards the entities and their history.
+
+**Why this approach:** `async_step_reconfigure` is Home Assistant's dedicated mechanism for exactly this ("Reconfigure" in the entry's overflow menu). The step re-uses `validate_connection()` and then applies two guards before writing:
+
+1. **Host uniqueness** — the host must not belong to another entry (`_host_taken_by_other_entry`); two entries on one IP would collide in the shared listener's `host → device` routing table. Reported as an inline form error so the address can be corrected without restarting the flow.
+2. **Device identity** — the serial returned by the probe must equal the entry's `unique_id` (`_abort_if_unique_id_mismatch(reason="wrong_device")`). Without it, pointing an entry at a second radio would silently attach the first radio's entities and history to the wrong device.
+
+The step writes `host`/`port` with `async_update_entry()` and leaves the reload to the entry's update listener. The reload is what makes the change take effect: the shared listener re-registers under the new IP and `hass.data[DOMAIN][entry_id]["host"]` (used for unregistering on unload) is rebuilt. The old host is unregistered by the unload half of that reload, which still sees the previous value.
+
+**Decision:** Do **not** use `async_update_reload_and_abort()` here, despite it being the canonical helper for a reconfigure step.
+
+**Context:** That helper calls `async_schedule_reload()` *in addition to* updating the entry — and updating the entry already triggers the entry's update listener, which reloads too (the listener exists for the options flow, §5.3). Both fired ~18 ms apart: the first reload sent the startup queries, the second tore the UDP socket down before the answers arrived, so `power`/`volume` stayed unset and every UDP entity was left `unavailable` until the next fallback poll. Home Assistant detects the same constellation ("has an update listener and should use it for scheduling a reload") and removes support for it in 2026.12.
+
+**Consequences:** An entry that is *not* loaded has no update listener registered, so the step reloads it explicitly in that case. The update listener itself is registered through `entry.async_on_unload()` so it is dropped on unload instead of accumulating one instance per reload.
+
+**Alternatives considered:**
+- Moving `host`/`port` into the options flow — rejected: connection identity is entry data by HA convention, and the options flow would then need the same validation and identity guards anyway.
+- Auto-updating the address via DHCP discovery — not an alternative but a complement; it would cover the common case without user interaction and can be added later without changing this flow.
+
+**Consequences:** The name is deliberately not part of the form — renaming an entry is already a built-in HA function, and offering it twice invites confusion with the device name.
+
+### 5.3 Options Flow
 
 A single form (`async_step_init`) exposes:
 
@@ -277,7 +363,7 @@ The chosen list is stored in `hass.data[DOMAIN][entry_id]["platforms"]` and used
 
 ### 6.3 Entry Data, Options & `hass.data` Layout
 
-- **Entry `data`** (immutable connection info): `host`, `port`, `name`.
+- **Entry `data`** (connection info): `host`, `port`, `name` — `host`/`port` are changeable through the reconfigure flow (§5.2).
 - **Entry `options`** (reconfigurable): all `icy_*`, `expose_http_settings`, `http_poll_interval`.
 - **`hass.data[DOMAIN]`:**
   - `"shared_listener"` → the single `SharedUDPListener`
@@ -404,6 +490,11 @@ The release process follows the central `RELEASE_GUIDE.md` (HACS ZIP release, ve
 
 | Doc Version | Date | Changes |
 |-------------|------|---------|
+| 1.12.0 | September 2026 | §4.4: the `sw`/`sp` diagnostic sensors are removed — the encoding is understood (issue #8) but the device's own UI contradicts it; documented why the fields are still posted unchanged |
+| 1.11.0 | September 2026 | §3.1: readiness no longer requires the volume — a lost `VOLUME` answer used to leave every UDP entity unavailable although nothing displayed depends on it; §4.2: the presets sensor stays unavailable until the station list has actually arrived |
+| 1.10.0 | September 2026 | New §2.6: setup probes the device over UDP and fails with `ConfigEntryNotReady` instead of setting up an entry whose entities can only be unavailable |
+| 1.9.0 | September 2026 | New §2.5: query pacing and startup retries — the radio answers only the first query of a burst, which left `volume` unset and every UDP entity permanently unavailable |
+| 1.8.0 | September 2026 | §5.2: reconfigure flow for host/port with host-uniqueness and serial-identity guards; §2.2: listener registration is restored after a config-flow probe; §6.3: entry data no longer immutable; §5.2: reload is left to the update listener (double reload dropped answers and breaks in HA 2026.12) |
 | 1.7.0 | June 2026 | §4.2: read-only Station Presets sensor (state = count, `N_name`/`N_url` attributes); sensor platform now always loaded |
 | 1.6.0 | June 2026 | §4.1: UPnP/AUX input sources — selectable in `source_list`, active source detected from `PLAYING:UPNP`/`AUX`; UPnP streaming via HA DLNA (Issue #5) |
 | 1.5.0 | June 2026 | §3.1: availability/reachability — fallback poll now probes the device via HTTP, marks it unavailable when offline and recovers automatically (Issue #3) |

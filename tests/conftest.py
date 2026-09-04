@@ -18,6 +18,44 @@ def auto_enable_custom_integrations(enable_custom_integrations):
     return enable_custom_integrations
 
 
+@pytest.fixture(autouse=True)
+def device_answers_the_setup_probe(request):
+    """Let the setup probe succeed, so tests can set an entry up at all.
+
+    Tests that cover the probe itself carry the `real_setup_probe` marker and
+    get the untouched implementation.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    if "real_setup_probe" in request.keywords:
+        yield
+        return
+
+    with patch(
+        "custom_components.busch_radio_inet.coordinator."
+        "BuschRadioCoordinator.async_probe_device",
+        new=AsyncMock(return_value=True),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def no_startup_query_delays():
+    """Strip the real-time pacing and retry waits from the startup queries.
+
+    Left alone, every entry setup would hold the event loop for the full retry
+    schedule.  The tests that cover the pacing itself patch these deliberately.
+    """
+    from unittest.mock import patch
+
+    with patch(
+        "custom_components.busch_radio_inet.coordinator.QUERY_SPACING", 0
+    ), patch(
+        "custom_components.busch_radio_inet.coordinator.STARTUP_RETRY_DELAYS", ()
+    ):
+        yield
+
+
 @pytest.fixture
 def device_host() -> str:
     return "192.168.1.179"
