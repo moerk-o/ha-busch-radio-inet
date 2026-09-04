@@ -165,12 +165,13 @@ async def test_validate_connection_reuses_shared_listener():
     """When a SharedUDPListener exists, validation registers on it instead of binding port 4242."""
     mock_listener = MagicMock()
     captured_callback = {}
+    undo_register = MagicMock()
 
     def fake_register(host, on_packet, client, on_notification=None):
         captured_callback["on_packet"] = on_packet
+        return undo_register
 
     mock_listener.register = fake_register
-    mock_listener.unregister = MagicMock()
 
     hass = MagicMock()
     hass.data = {"busch_radio_inet": {"shared_listener": mock_listener}}
@@ -190,14 +191,13 @@ async def test_validate_connection_reuses_shared_listener():
         result = await validate_connection(hass, "192.168.1.20", 4244)
 
     assert result["SERNO"] == "AABBCC112233"
-    mock_listener.unregister.assert_called_once_with("192.168.1.20")
+    undo_register.assert_called_once()
 
 
 async def test_validate_connection_shared_listener_timeout_raises_cannot_connect():
     """Timeout via shared listener path → CannotConnect."""
     mock_listener = MagicMock()
     mock_listener.register = MagicMock()
-    mock_listener.unregister = MagicMock()
 
     hass = MagicMock()
     hass.data = {"busch_radio_inet": {"shared_listener": mock_listener}}
@@ -216,7 +216,8 @@ async def test_validate_connection_shared_listener_timeout_raises_cannot_connect
             with pytest.raises(CannotConnect):
                 await validate_connection(hass, "192.168.1.20", 4244)
 
-    mock_listener.unregister.assert_called_once_with("192.168.1.20")
+    # The probe registration is undone even when validation fails.
+    mock_listener.register.return_value.assert_called_once()
 
 
 # ===========================================================================
@@ -302,6 +303,281 @@ async def test_validate_connection_no_listener_success():
 
     assert result["SERNO"] == "AABBCC112233"
     mock_transport.close.assert_called_once()
+
+
+# ===========================================================================
+# validate_connection – must not evict a live registration
+# ===========================================================================
+
+
+def _listener_with_live_device(host):
+    """Real SharedUDPListener with one device registered (no socket needed)."""
+    from custom_components.busch_radio_inet.udp_listener import SharedUDPListener
+
+    listener = SharedUDPListener(port=4242)
+    live_on_packet = MagicMock()
+    live_client = MagicMock()
+    listener.register(host, live_on_packet, live_client)
+    hass = MagicMock()
+    hass.data = {DOMAIN: {"shared_listener": listener}}
+    return listener, hass, live_on_packet, live_client
+
+
+async def test_validate_connection_restores_live_registration_on_success():
+    """Probing a host that a loaded entry owns must leave that entry routed."""
+    host = "192.168.1.179"
+    listener, hass, live_on_packet, live_client = _listener_with_live_device(host)
+
+    with patch(
+        "custom_components.busch_radio_inet.config_flow.BuschRadioUDPClient"
+    ) as mock_client_cls:
+        mock_client = MagicMock()
+
+        async def fake_send_get(cmd):
+            # Answer whichever callback is registered while the probe runs.
+            listener._devices[host][0]({"SERNO": "78C40E33745C"})
+
+        mock_client.send_get = fake_send_get
+        mock_client_cls.return_value = mock_client
+
+        result = await validate_connection(hass, host, 4244)
+
+    assert result["SERNO"] == "78C40E33745C"
+    on_packet, _on_notification, client = listener._devices[host]
+    assert on_packet is live_on_packet
+    assert client is live_client
+
+
+async def test_validate_connection_restores_live_registration_on_timeout():
+    """Same, but the probe fails – the live device must still be routed."""
+    host = "192.168.1.179"
+    listener, hass, live_on_packet, live_client = _listener_with_live_device(host)
+
+    with patch(
+        "custom_components.busch_radio_inet.config_flow.BuschRadioUDPClient"
+    ) as mock_client_cls, patch(
+        "custom_components.busch_radio_inet.config_flow.asyncio.wait_for",
+        side_effect=asyncio.TimeoutError,
+    ):
+        mock_client = MagicMock()
+        mock_client.send_get = AsyncMock()
+        mock_client_cls.return_value = mock_client
+
+        with pytest.raises(CannotConnect):
+            await validate_connection(hass, host, 4244)
+
+    on_packet, _on_notification, client = listener._devices[host]
+    assert on_packet is live_on_packet
+    assert client is live_client
+
+
+# ===========================================================================
+# Reconfigure flow
+# ===========================================================================
+
+
+def _patch_entry_setup():
+    """Patch the UDP pieces so a reload triggered by reconfigure stays offline."""
+    listener_patch = patch(
+        "custom_components.busch_radio_inet.__init__.SharedUDPListener"
+    )
+    client_patch = patch(
+        "custom_components.busch_radio_inet.__init__.BuschRadioUDPClient"
+    )
+    return listener_patch, client_patch
+
+
+async def test_reconfigure_flow_shows_form_with_current_values(
+    hass: HomeAssistant, mock_config_entry
+) -> None:
+    mock_config_entry.add_to_hass(hass)
+    result = await mock_config_entry.start_reconfigure_flow(hass)
+
+    assert result["type"] == "form"
+    assert result["step_id"] == "reconfigure"
+
+    suggested = {
+        str(key): key.description.get("suggested_value")
+        for key in result["data_schema"].schema
+        if key.description
+    }
+    assert suggested["host"] == "192.168.1.179"
+    assert suggested["port"] == 4244
+
+
+async def test_reconfigure_flow_updates_host_and_port(
+    hass: HomeAssistant, mock_config_entry, device_serial
+) -> None:
+    """The new address is stored in the entry data; the entry is not recreated."""
+    mock_config_entry.add_to_hass(hass)
+    entry_id = mock_config_entry.entry_id
+
+    listener_patch, client_patch = _patch_entry_setup()
+    with patch(
+        "custom_components.busch_radio_inet.config_flow.validate_connection",
+        return_value={"SERNO": device_serial},
+    ), listener_patch as mock_listener_cls, client_patch as mock_client_cls:
+        mock_listener = MagicMock()
+        mock_listener.start = AsyncMock()
+        mock_listener_cls.return_value = mock_listener
+        mock_client = MagicMock()
+        mock_client.send_get = AsyncMock()
+        mock_client_cls.return_value = mock_client
+
+        result = await mock_config_entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {"host": "192.168.3.65", "port": 4244},
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] == "abort"
+    assert result["reason"] == "reconfigure_successful"
+
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry.data["host"] == "192.168.3.65"
+    assert entry.data["port"] == 4244
+    # Untouched fields survive, and the entry keeps its identity.
+    assert entry.data["name"] == "Busch-Radio iNet"
+    assert entry.unique_id == device_serial
+
+
+async def test_reconfigure_flow_cannot_connect_shows_error(
+    hass: HomeAssistant, mock_config_entry
+) -> None:
+    mock_config_entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.busch_radio_inet.config_flow.validate_connection",
+        side_effect=CannotConnect,
+    ):
+        result = await mock_config_entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {"host": "192.168.3.99", "port": 4244},
+        )
+
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "cannot_connect"}
+    # Nothing was written to the entry.
+    assert mock_config_entry.data["host"] == "192.168.1.179"
+
+
+async def test_reconfigure_flow_can_retry_after_error(
+    hass: HomeAssistant, mock_config_entry, device_serial
+) -> None:
+    """A failed attempt keeps the flow open so the address can be corrected."""
+    mock_config_entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.busch_radio_inet.config_flow.validate_connection",
+        side_effect=CannotConnect,
+    ):
+        result = await mock_config_entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"host": "192.168.3.99", "port": 4244}
+        )
+
+    listener_patch, client_patch = _patch_entry_setup()
+    with patch(
+        "custom_components.busch_radio_inet.config_flow.validate_connection",
+        return_value={"SERNO": device_serial},
+    ), listener_patch as mock_listener_cls, client_patch as mock_client_cls:
+        mock_listener = MagicMock()
+        mock_listener.start = AsyncMock()
+        mock_listener_cls.return_value = mock_listener
+        mock_client = MagicMock()
+        mock_client.send_get = AsyncMock()
+        mock_client_cls.return_value = mock_client
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"host": "192.168.3.65", "port": 4244}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] == "abort"
+    assert result["reason"] == "reconfigure_successful"
+    assert mock_config_entry.data["host"] == "192.168.3.65"
+
+
+async def test_reconfigure_flow_rejects_a_different_device(
+    hass: HomeAssistant, mock_config_entry
+) -> None:
+    """A radio with another serial must not take over this entry."""
+    mock_config_entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.busch_radio_inet.config_flow.validate_connection",
+        return_value={"SERNO": "OTHERSERIAL01"},
+    ):
+        result = await mock_config_entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {"host": "192.168.3.65", "port": 4244},
+        )
+
+    assert result["type"] == "abort"
+    assert result["reason"] == "wrong_device"
+    assert mock_config_entry.data["host"] == "192.168.1.179"
+
+
+async def test_reconfigure_flow_rejects_host_of_another_entry(
+    hass: HomeAssistant, mock_config_entry
+) -> None:
+    """Two entries pointing at the same radio would collide in the UDP listener."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    mock_config_entry.add_to_hass(hass)
+    second_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"host": "192.168.1.180", "port": 4244, "name": "Radio 2"},
+        unique_id="AABBCC112233",
+        version=1,
+    )
+    second_entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.busch_radio_inet.config_flow.validate_connection",
+    ) as mock_validate:
+        result = await mock_config_entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {"host": "192.168.1.180", "port": 4244},
+        )
+
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "already_configured"}
+    mock_validate.assert_not_called()
+
+
+async def test_reconfigure_flow_accepts_the_entrys_own_host(
+    hass: HomeAssistant, mock_config_entry, device_serial
+) -> None:
+    """Re-submitting the unchanged host (e.g. to fix only the port) is allowed."""
+    mock_config_entry.add_to_hass(hass)
+
+    listener_patch, client_patch = _patch_entry_setup()
+    with patch(
+        "custom_components.busch_radio_inet.config_flow.validate_connection",
+        return_value={"SERNO": device_serial},
+    ), listener_patch as mock_listener_cls, client_patch as mock_client_cls:
+        mock_listener = MagicMock()
+        mock_listener.start = AsyncMock()
+        mock_listener_cls.return_value = mock_listener
+        mock_client = MagicMock()
+        mock_client.send_get = AsyncMock()
+        mock_client_cls.return_value = mock_client
+
+        result = await mock_config_entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {"host": "192.168.1.179", "port": 4245},
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] == "abort"
+    assert result["reason"] == "reconfigure_successful"
+    assert mock_config_entry.data["port"] == 4245
 
 
 # ===========================================================================

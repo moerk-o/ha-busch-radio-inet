@@ -9,13 +9,24 @@
           "port": "UDP Send Port",
           "name": "Device Name"
         }
+      },
+      "reconfigure": {
+        "title": "Update connection details",
+        "description": "Change the address {device} is reached at, for example after its IP address changed. The radio must be reachable and must report the same serial number this entry was set up with.",
+        "data": {
+          "host": "Host / IP Address",
+          "port": "UDP Send Port"
+        }
       }
     },
     "error": {
-      "cannot_connect": "Unable to connect to the device. Please check the IP address and ensure Energy Mode is set to Premium."
+      "cannot_connect": "Unable to connect to the device. Please check the IP address and ensure Energy Mode is set to Premium.",
+      "already_configured": "This host is already used by another Busch-Radio iNet entry."
     },
     "abort": {
-      "already_configured": "This device is already configured."
+      "already_configured": "This device is already configured.",
+      "wrong_device": "This is a different device. The serial number does not match the radio this entry was set up with.",
+      "reconfigure_successful": "Connection details updated."
     }
   },
   "options": {
