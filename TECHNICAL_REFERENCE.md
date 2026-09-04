@@ -245,7 +245,13 @@ The default name auto-increments for additional devices ("Busch-Radio iNet", "Bu
 1. **Host uniqueness** — the host must not belong to another entry (`_host_taken_by_other_entry`); two entries on one IP would collide in the shared listener's `host → device` routing table. Reported as an inline form error so the address can be corrected without restarting the flow.
 2. **Device identity** — the serial returned by the probe must equal the entry's `unique_id` (`_abort_if_unique_id_mismatch(reason="wrong_device")`). Without it, pointing an entry at a second radio would silently attach the first radio's entities and history to the wrong device.
 
-`async_update_reload_and_abort()` writes `host`/`port` and reloads the entry, so the shared listener re-registers under the new IP and `hass.data[DOMAIN][entry_id]["host"]` (used for unregistering on unload) is rebuilt. The old host is unregistered by the unload half of that reload, which still sees the previous value.
+The step writes `host`/`port` with `async_update_entry()` and leaves the reload to the entry's update listener. The reload is what makes the change take effect: the shared listener re-registers under the new IP and `hass.data[DOMAIN][entry_id]["host"]` (used for unregistering on unload) is rebuilt. The old host is unregistered by the unload half of that reload, which still sees the previous value.
+
+**Decision:** Do **not** use `async_update_reload_and_abort()` here, despite it being the canonical helper for a reconfigure step.
+
+**Context:** That helper calls `async_schedule_reload()` *in addition to* updating the entry — and updating the entry already triggers the entry's update listener, which reloads too (the listener exists for the options flow, §5.3). Both fired ~18 ms apart: the first reload sent the startup queries, the second tore the UDP socket down before the answers arrived, so `power`/`volume` stayed unset and every UDP entity was left `unavailable` until the next fallback poll. Home Assistant detects the same constellation ("has an update listener and should use it for scheduling a reload") and removes support for it in 2026.12.
+
+**Consequences:** An entry that is *not* loaded has no update listener registered, so the step reloads it explicitly in that case. The update listener itself is registered through `entry.async_on_unload()` so it is dropped on unload instead of accumulating one instance per reload.
 
 **Alternatives considered:**
 - Moving `host`/`port` into the options flow — rejected: connection identity is entry data by HA convention, and the options flow would then need the same validation and identity guards anyway.
@@ -423,7 +429,7 @@ The release process follows the central `RELEASE_GUIDE.md` (HACS ZIP release, ve
 
 | Doc Version | Date | Changes |
 |-------------|------|---------|
-| 1.8.0 | September 2026 | §5.2: reconfigure flow for host/port with host-uniqueness and serial-identity guards; §2.2: listener registration is restored after a config-flow probe; §6.3: entry data no longer immutable |
+| 1.8.0 | September 2026 | §5.2: reconfigure flow for host/port with host-uniqueness and serial-identity guards; §2.2: listener registration is restored after a config-flow probe; §6.3: entry data no longer immutable; §5.2: reload is left to the update listener (double reload dropped answers and breaks in HA 2026.12) |
 | 1.7.0 | June 2026 | §4.2: read-only Station Presets sensor (state = count, `N_name`/`N_url` attributes); sensor platform now always loaded |
 | 1.6.0 | June 2026 | §4.1: UPnP/AUX input sources — selectable in `source_list`, active source detected from `PLAYING:UPNP`/`AUX`; UPnP streaming via HA DLNA (Issue #5) |
 | 1.5.0 | June 2026 | §3.1: availability/reachability — fallback poll now probes the device via HTTP, marks it unavailable when offline and recovers automatically (Issue #3) |
