@@ -103,10 +103,13 @@ def _sent(client):
     return [c[0][0] for c in client.send_get.call_args_list]
 
 
+STATION = {"id": 1, "name": "Radio", "url": "http://x"}
+
+
 def _complete_state(coord):
     """Put the coordinator into the state a fully answered startup produces."""
     coord.serial_number = "78C40E33745C"
-    coord.station_list = [{"id": 1, "name": "Radio", "url": "http://x"}]
+    coord.handle_packet({"_stations": [STATION]})
     coord.power = True
     coord.volume = 12
     coord._playing_mode_known = True
@@ -121,6 +124,17 @@ async def test_pending_startup_queries_empty_once_all_answers_are_in():
     coord, _, _ = make_coordinator()
     _complete_state(coord)
     assert coord._pending_startup_queries() == []
+
+
+async def test_empty_station_list_still_counts_as_answered():
+    """A radio without stored presets answers with an empty list – that is an answer."""
+    coord, _, _ = make_coordinator()
+    assert "ALL_STATION_INFO" in coord._pending_startup_queries()
+
+    coord.handle_packet({"_stations": []})
+
+    assert coord.station_list_known is True
+    assert "ALL_STATION_INFO" not in coord._pending_startup_queries()
 
 
 async def test_playing_mode_answer_is_recorded():
@@ -168,7 +182,7 @@ async def test_startup_queries_repeat_only_what_is_still_missing():
         if parameter == "INFO_BLOCK":
             coord.serial_number = "78C40E33745C"
         elif parameter == "ALL_STATION_INFO":
-            coord.station_list = [{"id": 1, "name": "Radio", "url": "http://x"}]
+            coord.handle_packet({"_stations": [STATION]})
         elif parameter == "POWER_STATUS":
             coord.power = False
         elif parameter == "PLAYING_MODE":
@@ -260,13 +274,22 @@ def test_is_ready_false_before_data():
     assert coord.is_ready is False
 
 
-def test_is_ready_false_with_only_power():
+def test_is_ready_true_with_power_alone():
+    """A lost VOLUME answer must not keep the whole device unusable."""
     coord, _, _ = make_coordinator()
     coord.power = True
-    assert coord.is_ready is False
+    assert coord.is_ready is True
+
+
+def test_is_ready_true_when_powered_off():
+    """'Off' is a known state, not a missing one."""
+    coord, _, _ = make_coordinator()
+    coord.power = False
+    assert coord.is_ready is True
 
 
 def test_is_ready_false_with_only_volume():
+    """Volume alone says nothing about what the entity has to display."""
     coord, _, _ = make_coordinator()
     coord.volume = 10
     assert coord.is_ready is False

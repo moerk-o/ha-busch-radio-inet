@@ -146,7 +146,8 @@ the actual streaming is handled by Home Assistant's DLNA support.
 A read-only sensor that exposes the radio's 8 station preset slots, handy for
 building a custom dashboard card.
 
-- **State:** number of occupied presets (e.g. `6`)
+- **State:** number of occupied presets (e.g. `6`) — `unavailable` until the radio has
+  reported its preset list, so `0` always means "no presets stored".
 - **Attributes:** `1_name` / `1_url` … `8_name` / `8_url` — one pair per slot;
   empty slots have empty strings.
 

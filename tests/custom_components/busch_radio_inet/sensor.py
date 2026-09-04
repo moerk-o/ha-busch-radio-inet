@@ -156,7 +156,12 @@ class BuschRadioStationPresetsSensor(SensorEntity):
 
     @property
     def available(self) -> bool:
-        return self._coordinator.available
+        """Unavailable until the station list has actually been received.
+
+        native_value counts the list, so an outstanding answer would read as a
+        genuine "no presets stored" instead of "not known yet".
+        """
+        return self._coordinator.available and self._coordinator.station_list_known
 
     @property
     def native_value(self) -> int:

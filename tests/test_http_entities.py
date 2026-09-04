@@ -577,17 +577,33 @@ class TestMainsVoltageSensor:
 
 
 class TestBuschRadioStationPresetsSensor:
-    def _make(self, station_list):
+    def _make(self, station_list, station_list_known=True, available=True):
         from custom_components.busch_radio_inet.sensor import BuschRadioStationPresetsSensor
         coord = MagicMock()
         coord.station_list = station_list
-        coord.available = True
+        coord.station_list_known = station_list_known
+        coord.available = available
         coord.register_callback = MagicMock()
         coord.unregister_callback = MagicMock()
         entry = make_entry()
         entity = BuschRadioStationPresetsSensor(coord, entry)
         entity.async_write_ha_state = MagicMock()
         return entity, coord
+
+    def test_unavailable_until_the_station_list_arrives(self):
+        """0 would read as 'no presets stored' instead of 'not known yet'."""
+        entity, _ = self._make([], station_list_known=False)
+        assert entity.available is False
+
+    def test_available_with_zero_presets_once_the_list_arrived(self):
+        """A radio without stored presets legitimately reports zero."""
+        entity, _ = self._make([], station_list_known=True)
+        assert entity.available is True
+        assert entity.native_value == 0
+
+    def test_unavailable_when_the_device_is_unreachable(self):
+        entity, _ = self._make([], station_list_known=True, available=False)
+        assert entity.available is False
 
     def test_native_value_counts_occupied_presets(self):
         entity, _ = self._make([

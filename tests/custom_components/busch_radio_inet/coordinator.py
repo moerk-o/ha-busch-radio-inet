@@ -52,6 +52,10 @@ class BuschRadioCoordinator:
         # Set by the first packet of any kind – the setup probe waits on it.
         self._packet_received = asyncio.Event()
 
+        # An empty station list is a valid answer (a radio with no presets
+        # stored), so "answered" cannot be derived from the list itself.
+        self._station_list_known: bool = False
+
         # PLAYING_MODE has no field of its own that survives an "idle" answer,
         # so completion of that query is tracked explicitly.
         self._playing_mode_known: bool = False
@@ -72,13 +76,23 @@ class BuschRadioCoordinator:
 
     @property
     def is_ready(self) -> bool:
-        """True once we have received at least power state and volume."""
-        return self.power is not None and self.volume is not None
+        """True once the device has reported its power state.
+
+        Volume is deliberately not required: it arrives in its own UDP answer,
+        and nothing that decides what the entity shows depends on it — see
+        TECHNICAL_REFERENCE.md 3.1.
+        """
+        return self.power is not None
 
     @property
     def available(self) -> bool:
         """True when initialised and the device is currently reachable."""
         return self.is_ready and self._reachable
+
+    @property
+    def station_list_known(self) -> bool:
+        """True once the device has answered ALL_STATION_INFO."""
+        return self._station_list_known
 
     def set_reachability_client(self, client) -> None:
         """Attach the HTTP client used by the fallback poll to verify reachability."""
@@ -221,6 +235,7 @@ class BuschRadioCoordinator:
 
         # --- Station list (ALL_STATION_INFO) ---
         if "_stations" in fields:
+            self._station_list_known = True
             new_list = fields["_stations"]
             if self.station_list != new_list:
                 self.station_list = new_list
@@ -458,7 +473,7 @@ class BuschRadioCoordinator:
         pending = []
         if self.serial_number is None:
             pending.append("INFO_BLOCK")
-        if not self.station_list:
+        if not self._station_list_known:
             pending.append("ALL_STATION_INFO")
         if self.power is None:
             pending.append("POWER_STATUS")
