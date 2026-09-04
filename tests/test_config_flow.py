@@ -500,6 +500,57 @@ async def test_reconfigure_flow_can_retry_after_error(
     assert mock_config_entry.data["host"] == "192.168.3.65"
 
 
+async def test_reconfigure_flow_lets_the_update_listener_reload(
+    hass: HomeAssistant, mock_config_entry, device_serial
+) -> None:
+    """A loaded entry reloads through its update listener – not a second time.
+
+    Scheduling a reload on top of it tears the UDP listener down again right
+    after the startup queries went out, so their answers are lost.
+    """
+    from homeassistant.config_entries import ConfigEntryState
+
+    mock_config_entry.add_to_hass(hass)
+    mock_config_entry.mock_state(hass, ConfigEntryState.LOADED)
+
+    with patch(
+        "custom_components.busch_radio_inet.config_flow.validate_connection",
+        return_value={"SERNO": device_serial},
+    ), patch(
+        "homeassistant.config_entries.ConfigEntries.async_schedule_reload"
+    ) as mock_schedule_reload:
+        result = await mock_config_entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"host": "192.168.3.65", "port": 4244}
+        )
+
+    assert result["type"] == "abort"
+    assert result["reason"] == "reconfigure_successful"
+    assert mock_config_entry.data["host"] == "192.168.3.65"
+    mock_schedule_reload.assert_not_called()
+
+
+async def test_reconfigure_flow_reloads_an_entry_that_is_not_loaded(
+    hass: HomeAssistant, mock_config_entry, device_serial
+) -> None:
+    """Without a loaded entry there is no update listener to pick up the change."""
+    mock_config_entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.busch_radio_inet.config_flow.validate_connection",
+        return_value={"SERNO": device_serial},
+    ), patch(
+        "homeassistant.config_entries.ConfigEntries.async_schedule_reload"
+    ) as mock_schedule_reload:
+        result = await mock_config_entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"host": "192.168.3.65", "port": 4244}
+        )
+
+    assert result["reason"] == "reconfigure_successful"
+    mock_schedule_reload.assert_called_once_with(mock_config_entry.entry_id)
+
+
 async def test_reconfigure_flow_rejects_a_different_device(
     hass: HomeAssistant, mock_config_entry
 ) -> None:

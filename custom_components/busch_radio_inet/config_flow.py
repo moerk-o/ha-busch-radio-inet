@@ -7,7 +7,7 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
@@ -223,10 +223,26 @@ class BuschRadioINetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     await self.async_set_unique_id(info.get("SERNO", ""))
                     self._abort_if_unique_id_mismatch(reason="wrong_device")
 
-                    return self.async_update_reload_and_abort(
+                    # Deliberately not async_update_reload_and_abort(): that
+                    # schedules a reload on top of the one the entry's update
+                    # listener already performs.  Reloading twice tears the UDP
+                    # listener down again ~20 ms after the startup queries went
+                    # out, so their answers arrive at a closed socket and the
+                    # device stays unavailable until the next fallback poll.
+                    # Home Assistant warns about the double reload and drops
+                    # support for it in 2026.12.
+                    self.hass.config_entries.async_update_entry(
                         entry,
-                        data_updates={CONF_HOST: host, CONF_PORT: port},
+                        data=entry.data | {CONF_HOST: host, CONF_PORT: port},
                     )
+                    if entry.state is not ConfigEntryState.LOADED:
+                        # An entry that is not loaded (failed setup, disabled)
+                        # has no update listener registered, so nothing would
+                        # pick up the new address.
+                        self.hass.config_entries.async_schedule_reload(
+                            entry.entry_id
+                        )
+                    return self.async_abort(reason="reconfigure_successful")
 
         schema = vol.Schema(
             {
