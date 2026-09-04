@@ -102,6 +102,17 @@ After setup, open the integration options to configure:
 | **Expose device settings as HA entities** | disabled | Create additional entities for device settings |
 | **Settings poll interval (minutes)** | 5 min | How often to read settings from the device (1–60 min) |
 
+### Changing the IP Address
+
+If the radio's address changes — a new DHCP lease, for example — the entry does not
+have to be deleted and set up again. Open the integration entry's ⋮ menu and choose
+**Reconfigure**, then enter the new host (and port, if needed). All entities and their
+history are kept.
+
+Home Assistant checks that the radio at the new address reports the same serial number
+the entry was created with, so an entry cannot be attached to a different radio by
+mistake.
+
 ## Entities
 
 ### Media Player (`media_player.{name}`)
@@ -217,6 +228,9 @@ The integration marks the device **unavailable** when it stops responding — po
 the socket, network outage, or a device crash. Reachability is re-checked at least every
 5 minutes, and the device **recovers automatically** once it is back online (no reload
 needed). At startup the entities stay `unavailable` until the radio first responds.
+
+If the entities stay `unavailable` for good, check whether the radio's IP address has
+changed — see [Changing the IP Address](#changing-the-ip-address).
 
 ### Song/artist info not updating
 

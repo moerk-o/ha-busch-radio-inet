@@ -294,6 +294,46 @@ def test_two_devices_registered_independently():
     assert not listener.has_devices
 
 
+def test_register_undo_removes_a_fresh_registration():
+    listener = make_listener()
+    undo = listener.register(HOST1, MagicMock(), make_client())
+    undo()
+    assert not listener.has_devices
+
+
+def test_register_undo_restores_the_previous_registration():
+    """A temporary probe registration must not evict a live device."""
+    listener = make_listener()
+    original_packet = MagicMock()
+    original_client = make_client()
+    listener.register(HOST1, original_packet, original_client)
+
+    undo_probe = listener.register(HOST1, MagicMock(), make_client())
+    undo_probe()
+
+    on_packet, _on_notification, client = listener._devices[HOST1]
+    assert on_packet is original_packet
+    assert client is original_client
+
+
+def test_register_undo_restores_notification_callback():
+    listener = make_listener()
+    on_notif = MagicMock()
+    listener.register(HOST1, MagicMock(), make_client(), on_notif)
+
+    listener.register(HOST1, MagicMock(), make_client())()
+
+    assert listener._devices[HOST1][1] is on_notif
+
+
+def test_register_undo_leaves_other_hosts_untouched():
+    listener = make_listener()
+    listener.register(HOST2, MagicMock(), make_client())
+    listener.register(HOST1, MagicMock(), make_client())()
+    assert HOST2 in listener._devices
+    assert HOST1 not in listener._devices
+
+
 # ===========================================================================
 # SharedUDPListener – packet routing
 # ===========================================================================
