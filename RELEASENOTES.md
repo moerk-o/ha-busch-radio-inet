@@ -1,5 +1,40 @@
 ### ✨ New Features
 
+- **Reconfigure flow** – The connection details of an existing entry can now be changed:
+  open the entry's ⋮ menu and choose **Reconfigure** to enter a new host or port.
+- **More robust status detection** – Whether a configured radio can actually be reached is
+  now determined far more reliably. Home Assistant additionally flags the entry on the
+  integrations overview when a radio cannot be set up, instead of leaving it looking
+  healthy while none of its entities work.
+
+### 🐞 Bug Fixes
+
+- **Radio stuck on "unavailable"** – Status requests were sent all at once and the radio
+  only answered the first, so it often never reported its volume and stayed unavailable.
+  Requests are now paced and repeated.
+- **A lost reply no longer disables the device** – Availability no longer waits for the
+  volume, which nothing on the media player depends on.
+- **Station Presets showed 0 instead of nothing** – The sensor now stays unavailable until
+  the preset list has arrived.
+
+### 🗑️ Removed
+
+- **"Switch Input" and "Mains Voltage" sensors** – Removed due to substantial difficulties
+  interpreting the values the device reports.
+
+### 📝 Documentation
+
+- README: how to change the radio's address, and a note that a weak Wi-Fi signal shows up
+  as an unresponsive control channel while the device's web interface keeps working.
+
+**Full Changelog**: https://github.com/moerk-o/ha-busch-radio-inet/compare/v1.1.0...v1.2.0
+
+---
+
+# v1.1.0
+
+### ✨ New Features
+
 - **UPnP & AUX sources** – The media player source list now includes **UPnP** and **AUX**. Switching to UPnP turns the radio into a DLNA renderer, so Home Assistant can stream audio or send TTS to it. ([#5](https://github.com/moerk-o/ha-busch-radio-inet/issues/5))
 - **Offline detection** – The radio is marked **unavailable** when it stops responding (powered off, network outage, crash) and recovers automatically once it is reachable again. ([#3](https://github.com/moerk-o/ha-busch-radio-inet/issues/3))
 - **Station presets sensor** – A new read-only sensor exposes the 8 station preset slots (name and URL per slot), handy for building dashboard cards.
