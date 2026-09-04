@@ -1,7 +1,7 @@
 # Technical Reference: Home Assistant Integration `busch_radio_inet`
 
-**Version:** 1.7.0
-**Date:** June 2026
+**Version:** 1.8.0
+**Date:** September 2026
 **Target Platform:** Home Assistant Custom Integration
 **Development Language:** English (code, comments, variables)
 **Repository:** https://github.com/moerk-o/ha-busch-radio-inet
@@ -68,7 +68,7 @@ Every command carries `ID:HA` as a sender tag. Responses echo this field, so the
 
 **Context:** Port 4242 can only be bound once per host. The integration supports multiple radios (each its own config entry), so a per-entry listener would conflict on the second device. The device's source IP uniquely identifies which radio a packet came from.
 
-**Why this approach:** One bind, N devices. The listener keeps a `host → (on_packet, on_notification, client)` registry and dispatches per datagram. Lifecycle is reference-counted via `has_devices`. The config-flow validation reuses the running listener when one already exists, instead of opening a second socket (see `validate_connection()` in `config_flow.py`).
+**Why this approach:** One bind, N devices. The listener keeps a `host → (on_packet, on_notification, client)` registry and dispatches per datagram. Lifecycle is reference-counted via `has_devices`. The config-flow validation reuses the running listener when one already exists, instead of opening a second socket (see `validate_connection()` in `config_flow.py`). Because a probe may target a host that a loaded entry already owns (reconfigure re-checking its own radio), `register()` returns an undo callable that restores the previous registration — a plain `unregister()` would leave the live device without a packet route until the next reload.
 
 **Alternatives considered:**
 - One listener socket per config entry — rejected: second device fails to bind 4242.
@@ -234,7 +234,26 @@ A single-step user flow (`async_step_user`) collects **Host**, **Port** (default
 
 The default name auto-increments for additional devices ("Busch-Radio iNet", "Busch-Radio iNet 2", …).
 
-### 5.2 Options Flow
+### 5.2 Reconfigure Flow
+
+**Decision:** Connection details are changed through `async_step_reconfigure`, not through the options flow.
+
+**Context:** `host` and `port` live in the entry `data`, which the options flow cannot write. When a radio got a new DHCP lease the entry had to be deleted and re-created, which discards the entities and their history.
+
+**Why this approach:** `async_step_reconfigure` is Home Assistant's dedicated mechanism for exactly this ("Reconfigure" in the entry's overflow menu). The step re-uses `validate_connection()` and then applies two guards before writing:
+
+1. **Host uniqueness** — the host must not belong to another entry (`_host_taken_by_other_entry`); two entries on one IP would collide in the shared listener's `host → device` routing table. Reported as an inline form error so the address can be corrected without restarting the flow.
+2. **Device identity** — the serial returned by the probe must equal the entry's `unique_id` (`_abort_if_unique_id_mismatch(reason="wrong_device")`). Without it, pointing an entry at a second radio would silently attach the first radio's entities and history to the wrong device.
+
+`async_update_reload_and_abort()` writes `host`/`port` and reloads the entry, so the shared listener re-registers under the new IP and `hass.data[DOMAIN][entry_id]["host"]` (used for unregistering on unload) is rebuilt. The old host is unregistered by the unload half of that reload, which still sees the previous value.
+
+**Alternatives considered:**
+- Moving `host`/`port` into the options flow — rejected: connection identity is entry data by HA convention, and the options flow would then need the same validation and identity guards anyway.
+- Auto-updating the address via DHCP discovery — not an alternative but a complement; it would cover the common case without user interaction and can be added later without changing this flow.
+
+**Consequences:** The name is deliberately not part of the form — renaming an entry is already a built-in HA function, and offering it twice invites confusion with the device name.
+
+### 5.3 Options Flow
 
 A single form (`async_step_init`) exposes:
 
@@ -277,7 +296,7 @@ The chosen list is stored in `hass.data[DOMAIN][entry_id]["platforms"]` and used
 
 ### 6.3 Entry Data, Options & `hass.data` Layout
 
-- **Entry `data`** (immutable connection info): `host`, `port`, `name`.
+- **Entry `data`** (connection info): `host`, `port`, `name` — `host`/`port` are changeable through the reconfigure flow (§5.2).
 - **Entry `options`** (reconfigurable): all `icy_*`, `expose_http_settings`, `http_poll_interval`.
 - **`hass.data[DOMAIN]`:**
   - `"shared_listener"` → the single `SharedUDPListener`
@@ -404,6 +423,7 @@ The release process follows the central `RELEASE_GUIDE.md` (HACS ZIP release, ve
 
 | Doc Version | Date | Changes |
 |-------------|------|---------|
+| 1.8.0 | September 2026 | §5.2: reconfigure flow for host/port with host-uniqueness and serial-identity guards; §2.2: listener registration is restored after a config-flow probe; §6.3: entry data no longer immutable |
 | 1.7.0 | June 2026 | §4.2: read-only Station Presets sensor (state = count, `N_name`/`N_url` attributes); sensor platform now always loaded |
 | 1.6.0 | June 2026 | §4.1: UPnP/AUX input sources — selectable in `source_list`, active source detected from `PLAYING:UPNP`/`AUX`; UPnP streaming via HA DLNA (Issue #5) |
 | 1.5.0 | June 2026 | §3.1: availability/reachability — fallback poll now probes the device via HTTP, marks it unavailable when offline and recovers automatically (Issue #3) |
