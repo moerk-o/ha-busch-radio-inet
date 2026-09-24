@@ -26,6 +26,35 @@ from homeassistant.helpers.event import async_track_time_interval
 
 _LOGGER = logging.getLogger(__name__)
 
+# Stations deliver the StreamTitle in one of two orders.  Only an unambiguous
+# title can be split: one carrying both separators could be read either way, so
+# it is treated as not being a song at all rather than guessed at.
+_ARTIST_FIRST = " - "  # "Artist - Title"
+_TITLE_FIRST = " / "  # "Title / Artist"
+
+
+def split_stream_title(title: str | None) -> tuple[str | None, str | None]:
+    """Split an ICY StreamTitle into ``(artist, song)``.
+
+    Returns ``(None, None)`` when the title carries no separator or both of
+    them — every caller has to treat that as "this is not a song", so the
+    decision is made once here instead of in each of them.
+    """
+    if not title:
+        return None, None
+
+    artist_first = _ARTIST_FIRST in title
+    title_first = _TITLE_FIRST in title
+
+    if artist_first and not title_first:
+        artist, _, song = title.partition(_ARTIST_FIRST)
+    elif title_first and not artist_first:
+        song, _, artist = title.partition(_TITLE_FIRST)
+    else:
+        return None, None
+
+    return artist.strip() or None, song.strip() or None
+
 _ICY_CONNECT_TIMEOUT = 10  # seconds
 
 

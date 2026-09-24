@@ -13,6 +13,8 @@ from datetime import timedelta
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_track_time_interval
 
+from .icy_client import split_stream_title
+
 from .const import (
     POLL_INTERVAL,
     PROBE_ATTEMPTS,
@@ -373,19 +375,8 @@ class BuschRadioCoordinator:
             url: str | None = None
             title = self.media_title
 
-            # Tier 1: music artwork when exactly one known separator is present
-            # Supported: "Artist - Title"  or  "Title / Artist" (not both)
-            has_dash = bool(title and " - " in title)
-            has_slash = bool(title and " / " in title)
-
-            if has_dash and not has_slash:
-                artist, _, song = title.partition(" - ")
-                artist, song = artist.strip(), song.strip()
-            elif has_slash and not has_dash:
-                raw_song, _, raw_artist = title.partition(" / ")
-                song, artist = raw_song.strip(), raw_artist.strip()
-            else:
-                artist = song = None
+            # Tier 1: music artwork, but only for a title that splits cleanly
+            artist, song = split_stream_title(title)
 
             if artist and song:
                 _LOGGER.debug(
