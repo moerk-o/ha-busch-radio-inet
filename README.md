@@ -50,6 +50,10 @@ Once HA knows the artist and song title, it automatically searches for the match
 1. **iTunes** – checked first; fast and covers most mainstream music
 2. **MusicBrainz / Cover Art Archive** – used as a fallback for classical, jazz, and niche music
 
+A result is only used when its artist matches the one from the stream. Stations also send
+traffic bulletins and news teasers over the same channel, and without that check a text like
+`traffic info - latest news` produced a real but completely unrelated cover.
+
 If only the station is known (no song info available), HA looks up the station's logo in the
 **radio-browser.info** directory, first by stream URL, then by station name.
 
@@ -211,6 +215,8 @@ are fetched from the radio over the local network and written back when changed.
 | Entity | Values | Description |
 |--------|--------|-------------|
 | `sensor.{name}_energy_mode` | `PREMIUM` / `ECO` | Current energy mode |
+| `sensor.{name}_switch_input` | `Switch` / `Push-button` / `Automatic` | How the device reads the signal on its switch input terminal |
+| `sensor.{name}_mains_voltage` | `110V` / `230V` | Mains voltage the device expects at that terminal |
 | `button.{name}_refresh_settings` | – | Force re-read of all device settings from the radio |
 
 ## Troubleshooting

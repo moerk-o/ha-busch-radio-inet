@@ -210,10 +210,74 @@ async def test_async_post_general_sends_managed_fields_with_save():
     assert cap["url"].endswith("/de/general.cgi")
     assert cap["data"]["bb"] == "100"
     assert cap["data"]["dm"] == "1"
-    assert cap["data"]["sw"] == "4"
-    assert cap["data"]["sp"] == "4"
+    # 4 is the combined switch-input value; the form expects it split up again.
+    assert cap["data"]["sw"] == "0"  # function: Switch
+    assert cap["data"]["sp"] == "1"  # mains voltage: 230V
     for k in ("si", "pw", "s1", "fw"):
         assert k not in cap["data"]
+
+
+# ===========================================================================
+# Switch input: combined value in /radio.cfg, separate fields in the form
+# ===========================================================================
+
+
+@pytest.mark.parametrize(
+    ("stored", "function", "voltage"),
+    [
+        ("0", 0, 0),  # 110V, Switch
+        ("1", 1, 0),  # 110V, Push-button
+        ("2", 2, 0),  # 110V, Automatic
+        ("4", 0, 1),  # 230V, Switch
+        ("5", 1, 1),  # 230V, Push-button
+        ("6", 2, 1),  # 230V, Automatic
+    ],
+)
+def test_split_switch_input_covers_every_combination(stored, function, voltage):
+    """Measured against firmware 03.12 across all six settings (issue #8)."""
+    from custom_components.busch_radio_inet.http_client import split_switch_input
+
+    assert split_switch_input(stored) == (function, voltage)
+
+
+@pytest.mark.parametrize("raw", ["3", "7", "99", "-1", "", "abc", None])
+def test_split_switch_input_rejects_unknown_values(raw):
+    """An unexpected firmware value must read as unknown, not as a wrong guess."""
+    from custom_components.busch_radio_inet.http_client import split_switch_input
+
+    assert split_switch_input(raw) == (None, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stored", "sent_sw", "sent_sp"),
+    [("0", "0", "0"), ("1", "1", "0"), ("2", "2", "0"),
+     ("4", "0", "1"), ("5", "1", "1"), ("6", "2", "1")],
+)
+async def test_async_post_general_splits_the_switch_input(stored, sent_sw, sent_sp):
+    """Posting the combined value back rewrites the setting – see issue #10.
+
+    The firmware clamps each field to its highest valid option and recombines
+    them, so anything but 0 ends up at "230V / Automatic".
+    """
+    client, _ = _make_client()
+    cap = await _capture_post(client, {"ln": "de", "sw": stored, "sp": stored})
+
+    assert cap["data"]["sw"] == sent_sw
+    assert cap["data"]["sp"] == sent_sp
+
+
+@pytest.mark.asyncio
+async def test_async_post_general_passes_an_undecodable_value_through():
+    """Without a known combination, leave the fields exactly as they were.
+
+    Dropping them is not an option: the device resets them to default then.
+    """
+    client, _ = _make_client()
+    cap = await _capture_post(client, {"ln": "de", "sw": "99", "sp": "99"})
+
+    assert cap["data"]["sw"] == "99"
+    assert cap["data"]["sp"] == "99"
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,6 @@
 """Media player entity for Busch-Radio iNet."""
 
 import logging
-from typing import Any
 
 from homeassistant.components.media_player import (
     MediaPlayerEntity,
@@ -16,6 +15,8 @@ from homeassistant.helpers.device_registry import (
     format_mac,
 )
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+from .icy_client import split_stream_title
 
 from .const import (
     CONF_HOST,
@@ -165,14 +166,8 @@ class BuschRadioMediaPlayer(MediaPlayerEntity):
     @property
     def media_artist(self) -> str | None:
         """Artist parsed from ICY StreamTitle ('Artist - Title' or 'Title / Artist' format)."""
-        title = self._coordinator.media_title
-        has_dash = bool(title and " - " in title)
-        has_slash = bool(title and " / " in title)
-        if has_dash and not has_slash:
-            return title.split(" - ", 1)[0]
-        if has_slash and not has_dash:
-            return title.split(" / ", 1)[1]
-        return None
+        artist, _song = split_stream_title(self._coordinator.media_title)
+        return artist
 
     @property
     def media_image_url(self) -> str | None:

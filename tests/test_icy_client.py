@@ -535,3 +535,51 @@ async def test_run_with_metaint_calls_read_loop():
 
     conn._read_loop.assert_awaited_once()
     on_title.assert_not_called()
+
+
+# ===========================================================================
+# split_stream_title – the one place that decides what a song title looks like
+# ===========================================================================
+
+
+@pytest.mark.parametrize(
+    ("title", "artist", "song"),
+    [
+        ("Coldplay - Yellow", "Coldplay", "Yellow"),
+        ("Gimme all you lovin' / ZZ Top", "ZZ Top", "Gimme all you lovin'"),
+        ("  Adele  -  Hello  ", "Adele", "Hello"),
+    ],
+)
+def test_split_stream_title_reads_both_orders(title, artist, song):
+    from custom_components.busch_radio_inet.icy_client import split_stream_title
+
+    assert split_stream_title(title) == (artist, song)
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        None,
+        "",
+        "Just a plain title",          # no separator at all
+        "Artist - Title / Something",  # both separators: either reading is a guess
+    ],
+)
+def test_split_stream_title_refuses_to_guess(title):
+    from custom_components.busch_radio_inet.icy_client import split_stream_title
+
+    assert split_stream_title(title) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        (" - Hello", (None, "Hello")),  # separator, but no artist
+        ("Adele - ", ("Adele", None)),  # separator, but no song
+    ],
+)
+def test_split_stream_title_reports_a_missing_half_as_none(title, expected):
+    """Callers require both halves, so an empty one must not read as a value."""
+    from custom_components.busch_radio_inet.icy_client import split_stream_title
+
+    assert split_stream_title(title) == expected

@@ -32,6 +32,39 @@ def parse_radio_cfg(text: str) -> dict[str, str]:
     return result
 
 
+# The device's settings form offers the switch-input terminal as two separate radio
+# groups — `sw` (function) and `sp` (mains voltage expected at that terminal):
+#
+#     sw: 0 = Switch   1 = Push-button   2 = Automatic
+#     sp: 0 = 110V     1 = 230V
+#
+# /radio.cfg does not report them that way: it mirrors one combined value,
+# `voltage * 4 + function`, into *both* fields.  Contributed in issue #8 and
+# confirmed by measurement across all six combinations.
+SWITCH_INPUT_FUNCTIONS = {0: "Switch", 1: "Push-button", 2: "Automatic"}
+MAINS_VOLTAGES = {0: "110V", 1: "230V"}
+
+
+def split_switch_input(raw: str | None) -> tuple[int | None, int | None]:
+    """Split a combined sw/sp value into (function, mains voltage).
+
+    Returns ``(None, None)`` for anything that is not a known combination, so an
+    unexpected firmware value is treated as unknown rather than as a confident
+    but wrong reading.
+    """
+    try:
+        value = int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None, None
+    if value < 0:
+        return None, None
+
+    function, voltage = value % 4, value // 4
+    if function not in SWITCH_INPUT_FUNCTIONS or voltage not in MAINS_VOLTAGES:
+        return None, None
+    return function, voltage
+
+
 class HttpSettingsClient:
     """Low-level HTTP client for reading and writing device settings."""
 
@@ -91,6 +124,16 @@ class HttpSettingsClient:
         for cb in self._CHECKBOX_FIELDS:
             if fields.get(cb) == "1":
                 payload[cb] = "1"
+        # Both sw and sp carry the *combined* switch-input value, while the form
+        # expects them separately.  Posting the combined value back makes the
+        # firmware clamp each field to its highest valid option and recombine
+        # them, which silently rewrites the setting: everything but 0 ends up at
+        # "230V / Automatic" (issue #10).  Send what the form would send.
+        function, voltage = split_switch_input(fields.get("sw"))
+        if function is not None:
+            payload["sw"] = str(function)
+            payload["sp"] = str(voltage)
+
         payload["save"] = "Save"
 
         lang = fields.get("ln") or "en"

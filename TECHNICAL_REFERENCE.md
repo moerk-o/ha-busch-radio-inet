@@ -1,6 +1,6 @@
 # Technical Reference: Home Assistant Integration `busch_radio_inet`
 
-**Version:** 1.12.0
+**Version:** 1.14.1
 **Date:** September 2026
 **Target Platform:** Home Assistant Custom Integration
 **Development Language:** English (code, comments, variables)
@@ -188,10 +188,23 @@ When the media title changes, the coordinator schedules an artwork lookup and wr
 
 - **Tier 1 — music artwork** (only when the title parses into artist + song):
   1. **iTunes Search API** — primary; fast, broad mainstream coverage; thumbnail upscaled `100x100bb → 600x600bb`.
-  2. **MusicBrainz + Cover Art Archive** — fallback; CC0 data, strong for classical/niche. A relevance `score >= 85` is required; release selection prefers *Official Album > Official > first*.
+  2. **MusicBrainz + Cover Art Archive** — fallback; CC0 data, strong for classical/niche. A relevance `score >= 85` is required, the credited artist has to match (see below), and release selection prefers *Official Album > Official > first*. Up to five results are examined, because a non-matching top hit must not hide a correct one behind it.
+
+**Decision (result validation):** A lookup result is only used when its artist matches the one that was asked for, compared through `artist_matches()`.
+
+**Context:** Stations send more than songs over ICY — traffic bulletins, news teasers, promos. Anything containing one separator parses into an artist and a song, so `traffic info - latest news` reaches Tier 1 as a perfectly ordinary query. MusicBrainz answers it: its `score` is a relevance value, not a statement that the result has anything to do with the query, and with only the score checked the first hit was accepted and produced a plausible-looking but wrong cover (issue #4, reported with `Erased Tapes – Collection III` appearing on a German pop station).
+
+**Why this approach:** It needs no history, no per-station learning and no keyword lists, so it works on the first title after a station change and for stations that separate songs with ` - ` — neither of which a separator-based heuristic can do. The comparison normalizes away everything that routinely differs without meaning anything: case (`casefold`), accents (NFKD), and all non-alphanumeric characters, so `JAY-Z`/`Jay Z` and `Beyoncé`/`Beyonce` compare equal. A substring in either direction counts as a match, which covers a station announcing more than the database credits (`Justin Bieber feat. Ludacris` vs `Justin Bieber`) and the reverse (`Sting` vs `Sting & Shaggy`). Substring matching only applies from four characters up; below that an accidental overlap is more likely than a real match, so short names like `U2` or `AIR` are accepted through exact comparison instead.
+
+**Alternatives considered:**
+- Learning each station's separator and treating a deviating one as non-song (the original proposal in issue #4) — rejected: needs a previous song to learn from, cannot help on the first title after a station change, and does nothing for stations whose songs use ` - `.
+- Keyword lists (`traffic`, `news`, `Werbung`, …) — rejected: language-specific and never complete.
+- Fuzzy string distance with a threshold — rejected: stations do not produce typos, they produce different spellings, and normalization addresses that without an arbitrary cutoff.
+
+**Consequences:** The same rule now governs iTunes, which previously used a plain lowercase substring test. A song whose artist the station spells unrecognizably differently loses its cover and falls back to the station logo — acceptable, since a missing cover is less wrong than a confident one from another artist. Only the artist is compared, not the title: titles carry far more noise (`Remastered 2011`, `Live`, `Radio Edit`), and a cover from a different album by the right artist is barely wrong. `media_artist` is unaffected — for non-song text it still shows whatever the split produced, because that is pure text handling with no lookup involved.
 - **Tier 2 — station logo** (always, as final fallback): radio-browser.info by exact stream URL, then by station name (sorted by votes).
 
-**Title parsing for Tier 1:** a title qualifies only when **exactly one** known separator is present — `Artist - Title` *or* `Title / Artist` (not both, to avoid ambiguity). Otherwise Tier 1 is skipped and the station logo is used. The same parsing rule backs the `media_artist` property in `media_player.py`.
+**Title parsing for Tier 1:** a title qualifies only when **exactly one** known separator is present — `Artist - Title` *or* `Title / Artist` (not both, to avoid ambiguity). Otherwise Tier 1 is skipped and the station logo is used. The rule lives in `split_stream_title()` in `icy_client.py`, where the StreamTitle format belongs, and is used both here and by the `media_artist` property in `media_player.py` — it used to be implemented separately in each.
 
 > The `Title / Artist` variant was added in v1.0.6 — some stations send the ICY `StreamTitle` in that order.
 
@@ -261,7 +274,7 @@ Loaded only when `expose_http_settings` is enabled. All read from the `HttpSetti
 | **switch** | Audio World (`aw`), Daylight Saving (`sz`), Alarm (`ea`), Short Timer (`et`), Sleep Timer (`es`) |
 | **time** | Local Time (`hr`+`mi`), Alarm Time (`ah`+`am`) |
 | **button** | Refresh Settings, Sync Time from Home Assistant |
-| **sensor** | Energy Mode (UDP) |
+| **sensor** | Switch Input (`sw`, read-only), Mains Voltage (`sp`, read-only), Energy Mode (UDP) |
 
 **Switch semantics:** checkbox fields are `"1"` (on) / `""` (off).
 
@@ -269,7 +282,7 @@ Loaded only when `expose_http_settings` is enabled. All read from the `HttpSetti
 
 **Sync Time button:** writes `hr`, `mi` and `zs=1` (Manual) atomically — the device ignores `hr`/`mi` while Internet time sync is active, so manual mode must be set together with the time. The user can switch back to Internet sync via the Time Source select.
 
-**`sw` / `sp` (switch input) are deliberately not exposed as entities.** They are still written back unchanged on settings writes (§6.4) — see below for why both facts matter.
+**Status:** Superseded on 2026-09-24 — both claims below turned out to be wrong when measured. See "Switch input, measured" further down.
 
 **Decision:** The switch-input fields are read, written back verbatim, and shown to nobody.
 
@@ -280,6 +293,31 @@ Loaded only when `expose_http_settings` is enabled. All read from the `HttpSetti
 **Why the fields are still posted:** Omitting them is not the safe option. Stripping `sw`/`sp` from the POST made the device **reset them to default** on every settings write (see the superseded-decisions note in §6.4) — for an installation setting that would be the worst possible outcome. Posting the combined value back is demonstrably inert: the device ignores it as out of range for both groups, and the stored setting survives every write (observed across many writes at both `4` and `6`). Posting the *decoded* values instead would be formally closer to the form, but it would start actively writing a wiring setting on every brightness change in exchange for no benefit at all, since the setting is already preserved.
 
 **Consequences:** `sw` and `sp` must stay in `_VALUE_FIELDS`. The integration never offers the switch-input configuration for editing; the device's own web interface is the place to change it.
+
+#### Switch input, measured
+
+**Supersedes:** the block above (decision of 2026-09-04).
+
+**Decision:** `sw`/`sp` are decoded for display, and the **decoded** values are posted back — `sw = value % 4`, `sp = value // 4`, exactly what the device's own form sends.
+
+**Context:** Every claim in the superseded block was tested against the device (firmware 03.12) on 2026-09-24 by driving the form directly and re-reading `/radio.cfg`:
+
+| Stored | Meaning | Integration posted | Stored afterwards |
+|--------|---------|--------------------|-------------------|
+| 0 | 110V, Switch | `sw=0 sp=0` | 0 — unchanged |
+| 1 | 110V, Push-button | `sw=1 sp=1` | **5** — 230V, Push-button |
+| 2 | 110V, Automatic | `sw=2 sp=2` | **6** — 230V, Automatic |
+| 4 | 230V, Switch | `sw=4 sp=4` | **6** — 230V, Automatic |
+| 5 | 230V, Push-button | `sw=5 sp=5` | **6** — 230V, Automatic |
+| 6 | 230V, Automatic | `sw=6 sp=6` | 6 — unchanged |
+
+Posting the combined value is therefore **not inert**: the firmware clamps each field to its highest valid option (`sw` → 2, `sp` → 1) and recombines them, so every setting except `0` drifts to `6`. Only `0` and `6` are fixed points, which is why the earlier observation looked stable — the test device happened to sit at `6`. This is what moved the device from `4` in June to `6` in September: the integration's own settings writes (issue #10).
+
+The "device contradicts the decoding" argument is void as well. The form renders `Switch`/`110V` as selected for a stored `6` because a radio group falls back to its first option when the stored value is out of its range — a rendering quirk, not a different reading.
+
+**Why this approach:** Setting the form values `sw=2 sp=1` stores `6`; posting the decoded values for a stored `4` leaves it at `4`. Both verified. Omitting the fields is still not an option (the device resets them to default), so decoding is the only way to leave the setting alone.
+
+**Consequences:** The two diagnostic sensors are back, now showing `Switch`/`Push-button`/`Automatic` and `110V`/`230V`. They stay **read-only**: the setting describes physical wiring and belongs in the device's web interface. A value that is not a known combination reads as unknown rather than being guessed at, and is passed through unchanged on writes.
 
 ---
 
@@ -388,7 +426,7 @@ The chosen list is stored in `hass.data[DOMAIN][entry_id]["platforms"]` and used
 
 **Why this is safe:** the device's own form posts exactly this field set, so fields outside it are not managed by `general.cgi` and are never reset by omission. Read-Modify-Write keeps every other managed field at its current value, so only the field being set changes.
 
-> **Status — superseded decisions (verified against the real device):** Two earlier approaches were wrong. (1) Stripping `sw`/`sp` from a full-document POST made the device reset them to default on every write. (2) Posting the *complete* `/radio.cfg` to `/en/general.cgi` **without** `save=Save` returned HTTP 200 but never persisted — so HTTP settings writes never actually applied. The current approach (managed-field allowlist + `save=Save` + language-matched path) fixes both. `sw`/`sp` are part of the form (sent with their current value) but remain read-only at the entity level.
+> **Status — superseded decisions (verified against the real device):** Two earlier approaches were wrong. (1) Stripping `sw`/`sp` from a full-document POST made the device reset them to default on every write. (2) Posting the *complete* `/radio.cfg` to `/en/general.cgi` **without** `save=Save` returned HTTP 200 but never persisted — so HTTP settings writes never actually applied. The current approach (managed-field allowlist + `save=Save` + language-matched path) fixes both. `sw`/`sp` are part of the form and are sent **decoded** — sending their stored value verbatim rewrote the setting (§4.4, issue #10). They remain read-only at the entity level.
 
 The HTTP coordinator is started in the background (`async_create_task`) so an unreachable HTTP interface never blocks the main setup — entities simply stay `unavailable` until the first successful fetch.
 
@@ -427,7 +465,7 @@ Busch_Radio_iNet/
 │       ├── coordinator.py         # Push-based state coordinator (media)
 │       ├── udp_client.py          # Fire-and-forget UDP sender
 │       ├── udp_listener.py        # Shared UDP listener + packet parser
-│       ├── icy_client.py          # ICY metadata: interval + persistent strategies
+│       ├── icy_client.py          # ICY metadata: StreamTitle parsing + fetch strategies
 │       ├── artwork_client.py      # Two-tier artwork/logo lookup
 │       ├── http_client.py         # /radio.cfg read + /en/general.cgi write
 │       ├── http_coordinator.py    # DataUpdateCoordinator for HTTP settings
@@ -490,6 +528,9 @@ The release process follows the central `RELEASE_GUIDE.md` (HACS ZIP release, ve
 
 | Doc Version | Date | Changes |
 |-------------|------|---------|
+| 1.14.1 | September 2026 | §3.3: the StreamTitle split is now one shared function in `icy_client.py` instead of two identical implementations |
+| 1.14.0 | September 2026 | §3.3: artwork results are validated against the credited artist — a relevance score alone let non-song stream text produce wrong covers (issue #4) |
+| 1.13.0 | September 2026 | §4.4: switch-input decision superseded after measurement — posting the combined value rewrote the setting on every write (issue #10); decoded write plus both sensors restored |
 | 1.12.0 | September 2026 | §4.4: the `sw`/`sp` diagnostic sensors are removed — the encoding is understood (issue #8) but the device's own UI contradicts it; documented why the fields are still posted unchanged |
 | 1.11.0 | September 2026 | §3.1: readiness no longer requires the volume — a lost `VOLUME` answer used to leave every UDP entity unavailable although nothing displayed depends on it; §4.2: the presets sensor stays unavailable until the station list has actually arrived |
 | 1.10.0 | September 2026 | New §2.6: setup probes the device over UDP and fails with `ConfigEntryNotReady` instead of setting up an entry whose entities can only be unavailable |
