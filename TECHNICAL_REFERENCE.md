@@ -1,6 +1,6 @@
 # Technical Reference: Home Assistant Integration `busch_radio_inet`
 
-**Version:** 1.13.0
+**Version:** 1.14.0
 **Date:** September 2026
 **Target Platform:** Home Assistant Custom Integration
 **Development Language:** English (code, comments, variables)
@@ -188,7 +188,20 @@ When the media title changes, the coordinator schedules an artwork lookup and wr
 
 - **Tier 1 — music artwork** (only when the title parses into artist + song):
   1. **iTunes Search API** — primary; fast, broad mainstream coverage; thumbnail upscaled `100x100bb → 600x600bb`.
-  2. **MusicBrainz + Cover Art Archive** — fallback; CC0 data, strong for classical/niche. A relevance `score >= 85` is required; release selection prefers *Official Album > Official > first*.
+  2. **MusicBrainz + Cover Art Archive** — fallback; CC0 data, strong for classical/niche. A relevance `score >= 85` is required, the credited artist has to match (see below), and release selection prefers *Official Album > Official > first*. Up to five results are examined, because a non-matching top hit must not hide a correct one behind it.
+
+**Decision (result validation):** A lookup result is only used when its artist matches the one that was asked for, compared through `artist_matches()`.
+
+**Context:** Stations send more than songs over ICY — traffic bulletins, news teasers, promos. Anything containing one separator parses into an artist and a song, so `traffic info - latest news` reaches Tier 1 as a perfectly ordinary query. MusicBrainz answers it: its `score` is a relevance value, not a statement that the result has anything to do with the query, and with only the score checked the first hit was accepted and produced a plausible-looking but wrong cover (issue #4, reported with `Erased Tapes – Collection III` appearing on a German pop station).
+
+**Why this approach:** It needs no history, no per-station learning and no keyword lists, so it works on the first title after a station change and for stations that separate songs with ` - ` — neither of which a separator-based heuristic can do. The comparison normalizes away everything that routinely differs without meaning anything: case (`casefold`), accents (NFKD), and all non-alphanumeric characters, so `JAY-Z`/`Jay Z` and `Beyoncé`/`Beyonce` compare equal. A substring in either direction counts as a match, which covers a station announcing more than the database credits (`Justin Bieber feat. Ludacris` vs `Justin Bieber`) and the reverse (`Sting` vs `Sting & Shaggy`). Substring matching only applies from four characters up; below that an accidental overlap is more likely than a real match, so short names like `U2` or `AIR` are accepted through exact comparison instead.
+
+**Alternatives considered:**
+- Learning each station's separator and treating a deviating one as non-song (the original proposal in issue #4) — rejected: needs a previous song to learn from, cannot help on the first title after a station change, and does nothing for stations whose songs use ` - `.
+- Keyword lists (`traffic`, `news`, `Werbung`, …) — rejected: language-specific and never complete.
+- Fuzzy string distance with a threshold — rejected: stations do not produce typos, they produce different spellings, and normalization addresses that without an arbitrary cutoff.
+
+**Consequences:** The same rule now governs iTunes, which previously used a plain lowercase substring test. A song whose artist the station spells unrecognizably differently loses its cover and falls back to the station logo — acceptable, since a missing cover is less wrong than a confident one from another artist. Only the artist is compared, not the title: titles carry far more noise (`Remastered 2011`, `Live`, `Radio Edit`), and a cover from a different album by the right artist is barely wrong. `media_artist` is unaffected — for non-song text it still shows whatever the split produced, because that is pure text handling with no lookup involved.
 - **Tier 2 — station logo** (always, as final fallback): radio-browser.info by exact stream URL, then by station name (sorted by votes).
 
 **Title parsing for Tier 1:** a title qualifies only when **exactly one** known separator is present — `Artist - Title` *or* `Title / Artist` (not both, to avoid ambiguity). Otherwise Tier 1 is skipped and the station logo is used. The same parsing rule backs the `media_artist` property in `media_player.py`.
@@ -515,6 +528,7 @@ The release process follows the central `RELEASE_GUIDE.md` (HACS ZIP release, ve
 
 | Doc Version | Date | Changes |
 |-------------|------|---------|
+| 1.14.0 | September 2026 | §3.3: artwork results are validated against the credited artist — a relevance score alone let non-song stream text produce wrong covers (issue #4) |
 | 1.13.0 | September 2026 | §4.4: switch-input decision superseded after measurement — posting the combined value rewrote the setting on every write (issue #10); decoded write plus both sensors restored |
 | 1.12.0 | September 2026 | §4.4: the `sw`/`sp` diagnostic sensors are removed — the encoding is understood (issue #8) but the device's own UI contradicts it; documented why the fields are still posted unchanged |
 | 1.11.0 | September 2026 | §3.1: readiness no longer requires the volume — a lost `VOLUME` answer used to leave every UDP entity unavailable although nothing displayed depends on it; §4.2: the presets sensor stays unavailable until the station list has actually arrived |

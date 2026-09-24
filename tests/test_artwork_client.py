@@ -174,6 +174,7 @@ async def test_fetch_music_artwork_musicbrainz_caa_hit():
     mb_data = {
         "recordings": [{
             "score": 100,
+            "artist-credit": [{"name": "Artist"}],
             "releases": [{"id": "release-uuid-123"}]
         }]
     }
@@ -472,6 +473,7 @@ async def test_musicbrainz_score_exactly_85_is_accepted():
     mb_data = {
         "recordings": [{
             "score": 85,
+            "artist-credit": [{"name": "Artist"}],
             "releases": [{"id": "release-uuid-85"}]
         }]
     }
@@ -608,7 +610,7 @@ async def test_musicbrainz_no_recordings_returns_none():
 @pytest.mark.asyncio
 async def test_musicbrainz_no_releases_returns_none():
     client, _ = make_client()
-    mb = _make_response(200, {"recordings": [{"score": 100, "releases": []}]})
+    mb = _make_response(200, {"recordings": [{"score": 100, "artist-credit": [{"name": "A"}], "releases": []}]})
     with patch.object(client, "_fetch_itunes", new=AsyncMock(return_value=None)), \
          patch.object(client, "_mb_throttled_get", new=AsyncMock(return_value=mb)), \
          patch(_SESSION_PATCH, return_value=MagicMock()):
@@ -619,7 +621,7 @@ async def test_musicbrainz_no_releases_returns_none():
 async def test_musicbrainz_no_release_id_returns_none():
     client, _ = make_client()
     # A release without an "id" -> _best_release_id returns None.
-    mb = _make_response(200, {"recordings": [{"score": 100, "releases": [{}]}]})
+    mb = _make_response(200, {"recordings": [{"score": 100, "artist-credit": [{"name": "A"}], "releases": [{}]}]})
     with patch.object(client, "_fetch_itunes", new=AsyncMock(return_value=None)), \
          patch.object(client, "_mb_throttled_get", new=AsyncMock(return_value=mb)), \
          patch(_SESSION_PATCH, return_value=MagicMock()):
@@ -629,7 +631,7 @@ async def test_musicbrainz_no_release_id_returns_none():
 @pytest.mark.asyncio
 async def test_musicbrainz_caa_redirect_without_location_returns_none():
     client, _ = make_client()
-    mb = _make_response(200, {"recordings": [{"score": 100, "releases": [{"id": "rel-1"}]}]})
+    mb = _make_response(200, {"recordings": [{"score": 100, "artist-credit": [{"name": "A"}], "releases": [{"id": "rel-1"}]}]})
     caa = MagicMock()
     caa.status = 307
     caa.headers = {}  # redirect status but no Location header
@@ -643,7 +645,7 @@ async def test_musicbrainz_caa_redirect_without_location_returns_none():
 @pytest.mark.asyncio
 async def test_musicbrainz_caa_non_redirect_status_returns_none():
     client, _ = make_client()
-    mb = _make_response(200, {"recordings": [{"score": 100, "releases": [{"id": "rel-1"}]}]})
+    mb = _make_response(200, {"recordings": [{"score": 100, "artist-credit": [{"name": "A"}], "releases": [{"id": "rel-1"}]}]})
     caa = MagicMock()
     caa.status = 404  # no artwork available
     caa.headers = {}
@@ -694,3 +696,163 @@ async def test_radiobrowser_by_name_cancelled_propagates():
     with patch(_SESSION_PATCH, return_value=session):
         with pytest.raises(asyncio.CancelledError):
             await client._fetch_radiobrowser_by_name("Station")
+
+
+# ===========================================================================
+# Artist matching – keeps non-song stream text from producing artwork (#4)
+# ===========================================================================
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("Beyoncé", "beyonce"),
+        ("JAY-Z", "jayz"),
+        ("Guns N' Roses", "gunsnroses"),
+        ("AC/DC", "acdc"),
+        ("Die Ärzte", "diearzte"),
+        ("  The   Beatles  ", "thebeatles"),
+        ("", ""),
+    ],
+)
+def test_normalize_strips_everything_that_carries_no_meaning(raw, expected):
+    from custom_components.busch_radio_inet.artwork_client import _normalize
+
+    assert _normalize(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("wanted", "found"),
+    [
+        ("Justin Bieber feat. Ludacris", "Justin Bieber"),  # station says more
+        ("Sting", "Sting & Shaggy"),                        # database says more
+        ("JAY-Z", "Jay Z"),                                 # punctuation only
+        ("Beyoncé", "Beyonce"),                             # accents only
+        ("U2", "U2"),                                       # short, but exact
+        ("AIR", "Air"),                                     # short, case only
+    ],
+)
+def test_artist_matches_accepts_the_same_artist(wanted, found):
+    from custom_components.busch_radio_inet.artwork_client import artist_matches
+
+    assert artist_matches(wanted, found) is True
+
+
+@pytest.mark.parametrize(
+    ("wanted", "found"),
+    [
+        ("traffic info", "Erased Tapes"),   # the case from issue #4
+        ("Verkehr", "Terence Chill"),
+        ("news", "New Order"),              # shares letters, not the name
+        ("U2", "U2 Cover Band Deluxe"),     # too short to accept as substring
+        ("Adele", ""),                      # no artist-credit in the result
+        ("", "Adele"),
+    ],
+)
+def test_artist_matches_rejects_everything_else(wanted, found):
+    from custom_components.busch_radio_inet.artwork_client import artist_matches
+
+    assert artist_matches(wanted, found) is False
+
+
+@pytest.mark.asyncio
+async def test_musicbrainz_rejects_a_high_score_with_a_foreign_artist():
+    """A traffic bulletin still scores high – the credited artist must decide."""
+    client, _ = make_client()
+    mb_data = {
+        "recordings": [{
+            "score": 100,
+            "artist-credit": [{"name": "Erased Tapes"}],
+            "releases": [{"id": "release-uuid-wrong"}],
+        }]
+    }
+    with patch.object(client, "_fetch_itunes", new=AsyncMock(return_value=None)), \
+         patch.object(
+             client, "_mb_throttled_get",
+             new=AsyncMock(return_value=_make_response(200, mb_data)),
+         ), patch(
+             "custom_components.busch_radio_inet.artwork_client.async_get_clientsession",
+             return_value=MagicMock(),
+         ):
+        result = await client.fetch_music_artwork("traffic info", "latest news")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_musicbrainz_looks_past_a_non_matching_first_hit():
+    """The top hit used to be the only one considered."""
+    client, _ = make_client()
+    mb_data = {
+        "recordings": [
+            {
+                "score": 100,
+                "artist-credit": [{"name": "Somebody Else"}],
+                "releases": [{"id": "release-uuid-wrong"}],
+            },
+            {
+                "score": 90,
+                "artist-credit": [{"name": "Adele"}],
+                "releases": [{"id": "release-uuid-right"}],
+            },
+        ]
+    }
+    caa_resp = MagicMock()
+    caa_resp.status = 307
+    caa_resp.headers = {"Location": "https://archive.org/adele.jpg"}
+    session = MagicMock()
+    session.get = MagicMock(return_value=AsyncMock(
+        __aenter__=AsyncMock(return_value=caa_resp),
+        __aexit__=AsyncMock(return_value=False),
+    ))
+
+    with patch.object(client, "_fetch_itunes", new=AsyncMock(return_value=None)), \
+         patch.object(
+             client, "_mb_throttled_get",
+             new=AsyncMock(return_value=_make_response(200, mb_data)),
+         ), patch(
+             "custom_components.busch_radio_inet.artwork_client.async_get_clientsession",
+             return_value=session,
+         ):
+        result = await client.fetch_music_artwork("Adele", "Hello")
+
+    assert result == "https://archive.org/adele.jpg"
+
+
+@pytest.mark.asyncio
+async def test_musicbrainz_rejects_a_result_without_artist_credit():
+    client, _ = make_client()
+    mb_data = {
+        "recordings": [{"score": 100, "releases": [{"id": "release-uuid-x"}]}]
+    }
+    with patch.object(client, "_fetch_itunes", new=AsyncMock(return_value=None)), \
+         patch.object(
+             client, "_mb_throttled_get",
+             new=AsyncMock(return_value=_make_response(200, mb_data)),
+         ), patch(
+             "custom_components.busch_radio_inet.artwork_client.async_get_clientsession",
+             return_value=MagicMock(),
+         ):
+        result = await client.fetch_music_artwork("Adele", "Hello")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_itunes_uses_the_same_matching_rule():
+    """'Beyonce' from the stream must still match 'Beyoncé' at iTunes."""
+    client, _ = make_client()
+    itunes_data = {
+        "results": [{
+            "artistName": "Beyoncé",
+            "artworkUrl100": "https://example.com/100x100bb.jpg",
+        }]
+    }
+    session = _mock_session(_make_response(200, itunes_data))
+    with patch(
+        "custom_components.busch_radio_inet.artwork_client.async_get_clientsession",
+        return_value=session,
+    ):
+        result = await client.fetch_music_artwork("Beyonce", "Halo")
+
+    assert result == "https://example.com/600x600bb.jpg"
