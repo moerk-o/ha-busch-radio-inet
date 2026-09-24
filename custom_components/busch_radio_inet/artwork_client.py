@@ -18,6 +18,7 @@ shared across all ArtworkClient instances (all radios in the same HA process).
 import asyncio
 import logging
 import time
+import unicodedata
 from urllib.parse import quote as urlquote
 
 import aiohttp
@@ -32,6 +33,54 @@ _mb_last_request: float = 0.0
 _MB_MIN_INTERVAL: float = 1.5  # seconds between MB requests (limit is 1/s, we use 1.5s buffer)
 
 _REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=8)
+
+
+# Shortest artist name that may be accepted as a substring of the other side.
+# Below this, an accidental overlap is more likely than a real match, so only an
+# exact match counts — which keeps short real names like "U2" or "AIR" working.
+_MIN_SUBSTRING_LENGTH = 4
+
+
+def _normalize(text: str) -> str:
+    """Reduce a name to comparable characters.
+
+    Case, accents, spacing and punctuation differ constantly between what a
+    station announces and what a music database stores ("JAY-Z" / "Jay Z",
+    "Beyoncé" / "Beyonce"), and none of those differences mean anything.
+    """
+    decomposed = unicodedata.normalize("NFKD", text).casefold()
+    return "".join(c for c in decomposed if c.isalnum())
+
+
+def artist_matches(wanted: str, found: str) -> bool:
+    """Return True if a lookup result plausibly belongs to the artist asked for.
+
+    Substring in either direction, because a station may announce more than the
+    database credits ("Justin Bieber feat. Ludacris" vs "Justin Bieber") or less
+    ("Sting" vs "Sting & Shaggy").
+
+    This is what keeps non-song stream text from producing artwork: a search for
+    "traffic info" still returns something with a high relevance score, but the
+    credited artist has nothing in common with it (issue #4).
+    """
+    a, b = _normalize(wanted), _normalize(found)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+    return len(shorter) >= _MIN_SUBSTRING_LENGTH and shorter in longer
+
+
+def _credited_artist(recording: dict) -> str:
+    """Join a MusicBrainz artist-credit into one comparable string."""
+    parts = []
+    for credit in recording.get("artist-credit", []):
+        if isinstance(credit, dict):
+            name = credit.get("name") or credit.get("artist", {}).get("name", "")
+            if name:
+                parts.append(name)
+    return " ".join(parts)
 
 
 def _best_release_id(releases: list) -> str | None:
@@ -141,10 +190,9 @@ class ArtworkClient:
                 data = await response.json(content_type=None)
             results = data.get("results", [])
             _LOGGER.debug("iTunes: %d result(s) for artist='%s' title='%s'", len(results), artist, title)
-            artist_lower = artist.lower()
             for item in results:
                 item_artist = item.get("artistName", "")
-                if artist_lower not in item_artist.lower():
+                if not artist_matches(artist, item_artist):
                     _LOGGER.debug("iTunes: skipping artistName='%s' (no match for '%s')", item_artist, artist)
                     continue
                 artwork = item.get("artworkUrl100", "")
@@ -171,7 +219,7 @@ class ArtworkClient:
             mb_url = (
                 "https://musicbrainz.org/ws/2/recording/"
                 f"?query=artist:{urlquote(artist)}+recording:{urlquote(title)}"
-                "&fmt=json&limit=1"
+                "&fmt=json&limit=5"
             )
             response = await self._mb_throttled_get(session, mb_url)
             if response.status != 200:
@@ -181,24 +229,45 @@ class ArtworkClient:
             recordings = data.get("recordings", [])
             if not recordings:
                 return None
-            score = recordings[0].get("score", 0)
-            _LOGGER.debug(
-                "MusicBrainz: score=%s for '%s – %s' → %s",
-                score, artist, title,
-                "accepted" if score >= 85 else "rejected (below threshold 85)",
-            )
-            if score < 85:
-                return None
-            releases = recordings[0].get("releases", [])
-            if not releases:
-                return None
-            release_id = _best_release_id(releases)
+
+            # The score is a relevance value, not a promise that the result has
+            # anything to do with the query — nonsense text scores high too.  So
+            # the credited artist has to match as well, and a non-matching top
+            # hit must not hide a correct one behind it (issue #4).
+            release_id = None
+            for recording in recordings:
+                score = recording.get("score", 0)
+                credited = _credited_artist(recording)
+                if score < 85:
+                    _LOGGER.debug(
+                        "MusicBrainz: skipping '%s' (score %s below threshold 85)",
+                        credited, score,
+                    )
+                    continue
+                if not artist_matches(artist, credited):
+                    _LOGGER.debug(
+                        "MusicBrainz: skipping artist-credit='%s' (no match for '%s')",
+                        credited, artist,
+                    )
+                    continue
+                releases = recording.get("releases", [])
+                if not releases:
+                    continue
+                release_id = _best_release_id(releases)
+                if release_id:
+                    _LOGGER.debug(
+                        "MusicBrainz: matched artist-credit='%s' (score %s), "
+                        "%d release(s), selected %s",
+                        credited, score, len(releases), release_id,
+                    )
+                    break
+
             if not release_id:
+                _LOGGER.debug(
+                    "MusicBrainz: no usable match for '%s – %s' in %d result(s)",
+                    artist, title, len(recordings),
+                )
                 return None
-            _LOGGER.debug(
-                "MusicBrainz: %d release(s) found, selected %s",
-                len(releases), release_id,
-            )
 
             # Step 2: Cover Art Archive – follow redirect to get the image URL
             caa_url = f"https://coverartarchive.org/release/{release_id}/front"
