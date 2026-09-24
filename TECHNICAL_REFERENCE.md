@@ -1,6 +1,6 @@
 # Technical Reference: Home Assistant Integration `busch_radio_inet`
 
-**Version:** 1.14.0
+**Version:** 1.14.1
 **Date:** September 2026
 **Target Platform:** Home Assistant Custom Integration
 **Development Language:** English (code, comments, variables)
@@ -204,7 +204,7 @@ When the media title changes, the coordinator schedules an artwork lookup and wr
 **Consequences:** The same rule now governs iTunes, which previously used a plain lowercase substring test. A song whose artist the station spells unrecognizably differently loses its cover and falls back to the station logo — acceptable, since a missing cover is less wrong than a confident one from another artist. Only the artist is compared, not the title: titles carry far more noise (`Remastered 2011`, `Live`, `Radio Edit`), and a cover from a different album by the right artist is barely wrong. `media_artist` is unaffected — for non-song text it still shows whatever the split produced, because that is pure text handling with no lookup involved.
 - **Tier 2 — station logo** (always, as final fallback): radio-browser.info by exact stream URL, then by station name (sorted by votes).
 
-**Title parsing for Tier 1:** a title qualifies only when **exactly one** known separator is present — `Artist - Title` *or* `Title / Artist` (not both, to avoid ambiguity). Otherwise Tier 1 is skipped and the station logo is used. The same parsing rule backs the `media_artist` property in `media_player.py`.
+**Title parsing for Tier 1:** a title qualifies only when **exactly one** known separator is present — `Artist - Title` *or* `Title / Artist` (not both, to avoid ambiguity). Otherwise Tier 1 is skipped and the station logo is used. The rule lives in `split_stream_title()` in `icy_client.py`, where the StreamTitle format belongs, and is used both here and by the `media_artist` property in `media_player.py` — it used to be implemented separately in each.
 
 > The `Title / Artist` variant was added in v1.0.6 — some stations send the ICY `StreamTitle` in that order.
 
@@ -465,7 +465,7 @@ Busch_Radio_iNet/
 │       ├── coordinator.py         # Push-based state coordinator (media)
 │       ├── udp_client.py          # Fire-and-forget UDP sender
 │       ├── udp_listener.py        # Shared UDP listener + packet parser
-│       ├── icy_client.py          # ICY metadata: interval + persistent strategies
+│       ├── icy_client.py          # ICY metadata: StreamTitle parsing + fetch strategies
 │       ├── artwork_client.py      # Two-tier artwork/logo lookup
 │       ├── http_client.py         # /radio.cfg read + /en/general.cgi write
 │       ├── http_coordinator.py    # DataUpdateCoordinator for HTTP settings
@@ -528,6 +528,7 @@ The release process follows the central `RELEASE_GUIDE.md` (HACS ZIP release, ve
 
 | Doc Version | Date | Changes |
 |-------------|------|---------|
+| 1.14.1 | September 2026 | §3.3: the StreamTitle split is now one shared function in `icy_client.py` instead of two identical implementations |
 | 1.14.0 | September 2026 | §3.3: artwork results are validated against the credited artist — a relevance score alone let non-song stream text produce wrong covers (issue #4) |
 | 1.13.0 | September 2026 | §4.4: switch-input decision superseded after measurement — posting the combined value rewrote the setting on every write (issue #10); decoded write plus both sensors restored |
 | 1.12.0 | September 2026 | §4.4: the `sw`/`sp` diagnostic sensors are removed — the encoding is understood (issue #8) but the device's own UI contradicts it; documented why the fields are still posted unchanged |
