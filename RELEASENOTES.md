@@ -1,5 +1,32 @@
 ### ✨ New Features
 
+- **Switch input is visible again** – The two diagnostic sensors are back and now show
+  what they actually mean: `Switch` / `Push-button` / `Automatic` and `110V` / `230V`.
+  They are read-only; the setting belongs in the radio's own web interface.
+
+### 🐞 Bug Fixes
+
+- **Device settings no longer change the switch input** – Every settings write silently
+  rewrote the radio's switch input configuration, ending up at `230V / Automatic`
+  regardless of what was set. A 110V installation had its voltage setting flipped. Thanks
+  to @anticharm01 for decoding these values and for insisting they made sense. ([#10](https://github.com/moerk-o/ha-busch-radio-inet/issues/10))
+- **Improved detection of actual music for cover arts** – We now check that the result
+  matches the artist announced in the stream, so the artwork shown should be correct more
+  often. It also means fewer covers appear during programme interruptions such as traffic
+  bulletins or news. ([#4](https://github.com/moerk-o/ha-busch-radio-inet/issues/4))
+
+### 📝 Documentation
+
+- Technical reference: the switch input encoding, measured across all six settings.
+
+**Full Changelog**: https://github.com/moerk-o/ha-busch-radio-inet/compare/v1.2.0...v1.3.0
+
+---
+
+# v1.2.0
+
+### ✨ New Features
+
 - **Reconfigure flow** – The connection details of an existing entry can now be changed:
   open the entry's ⋮ menu and choose **Reconfigure** to enter a new host or port.
 - **More robust status detection** – Whether a configured radio can actually be reached is
