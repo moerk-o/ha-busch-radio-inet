@@ -523,6 +523,62 @@ class TestBuschRadioEnergyModeSensor:
         coord.unregister_callback.assert_called_once_with(entity.async_write_ha_state)
 
 
+class TestSwitchInputSensors:
+    """Both halves of the combined switch-input value (issues #8 / #10)."""
+
+    def _make(self, stored):
+        from custom_components.busch_radio_inet.sensor import (
+            MainsVoltageSensor,
+            SwitchInputSensor,
+        )
+
+        coord = make_http_coordinator({"sw": stored, "sp": stored})
+        entry = make_entry()
+        return SwitchInputSensor(coord, entry), MainsVoltageSensor(coord, entry)
+
+    @pytest.mark.parametrize(
+        ("stored", "function", "voltage"),
+        [
+            ("0", "Switch", "110V"),
+            ("1", "Push-button", "110V"),
+            ("2", "Automatic", "110V"),
+            ("4", "Switch", "230V"),
+            ("5", "Push-button", "230V"),
+            ("6", "Automatic", "230V"),
+        ],
+    )
+    def test_decodes_every_combination(self, stored, function, voltage):
+        switch, mains = self._make(stored)
+        assert switch.native_value == function
+        assert mains.native_value == voltage
+
+    @pytest.mark.parametrize("stored", ["3", "99", "", "abc"])
+    def test_unknown_value_reads_as_none(self, stored):
+        """Better no reading than a confident wrong one."""
+        switch, mains = self._make(stored)
+        assert switch.native_value is None
+        assert mains.native_value is None
+
+    def test_missing_field_reads_as_none(self):
+        from custom_components.busch_radio_inet.sensor import SwitchInputSensor
+
+        entity = SwitchInputSensor(make_http_coordinator({}), make_entry())
+        assert entity.native_value is None
+
+    def test_unavailable_when_data_none(self):
+        from custom_components.busch_radio_inet.sensor import SwitchInputSensor
+
+        coord = make_http_coordinator(None)
+        coord.available = True
+        assert not SwitchInputSensor(coord, make_entry()).available
+
+    def test_unique_ids_stay_distinct(self):
+        switch, mains = self._make("6")
+        assert switch.unique_id.endswith("_http_sw")
+        assert mains.unique_id.endswith("_http_sp")
+        assert switch.unique_id != mains.unique_id
+
+
 class TestBuschRadioStationPresetsSensor:
     def _make(self, station_list, station_list_known=True, available=True):
         from custom_components.busch_radio_inet.sensor import BuschRadioStationPresetsSensor
