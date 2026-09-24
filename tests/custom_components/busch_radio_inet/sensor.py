@@ -6,9 +6,11 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import BuschRadioCoordinator
+from .http_client import MAINS_VOLTAGES, SWITCH_INPUT_FUNCTIONS, split_switch_input
 from .http_coordinator import HttpSettingsCoordinator
 
 
@@ -56,6 +58,74 @@ class BuschRadioEnergyModeSensor(SensorEntity):
 
 # ---------------------------------------------------------------------------
 # HTTP-based sensors (read from /radio.cfg via HttpSettingsCoordinator)
+# ---------------------------------------------------------------------------
+# Switch input (HTTP settings)
+# ---------------------------------------------------------------------------
+
+class _SwitchInputSensor(CoordinatorEntity[HttpSettingsCoordinator], SensorEntity):
+    """Base for the two halves of the combined switch-input value.
+
+    Read-only on purpose: the switch input describes how the terminal is wired,
+    so it belongs in the device's own web interface, not behind a dashboard
+    control.
+    """
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: HttpSettingsCoordinator,
+        entry: ConfigEntry,
+        key: str,
+        name: str,
+    ) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._key = key
+        self._attr_name = name
+        self._attr_unique_id = f"{entry.unique_id}_http_{key}"
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.coordinator.data is not None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(identifiers={(DOMAIN, self._entry.unique_id)})
+
+
+class SwitchInputSensor(_SwitchInputSensor):
+    """How the device interprets the signal on its switch input."""
+
+    _attr_options = list(SWITCH_INPUT_FUNCTIONS.values())
+
+    def __init__(self, coordinator: HttpSettingsCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry, "sw", "Switch Input")
+
+    @property
+    def native_value(self) -> str | None:
+        function, _voltage = split_switch_input(self.coordinator.data.get("sw"))
+        return SWITCH_INPUT_FUNCTIONS.get(function)
+
+
+class MainsVoltageSensor(_SwitchInputSensor):
+    """Mains voltage the device expects at its switch input.
+
+    A setting describing the installation, not a measurement.
+    """
+
+    _attr_options = list(MAINS_VOLTAGES.values())
+
+    def __init__(self, coordinator: HttpSettingsCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry, "sp", "Mains Voltage")
+
+    @property
+    def native_value(self) -> str | None:
+        _function, voltage = split_switch_input(self.coordinator.data.get("sp"))
+        return MAINS_VOLTAGES.get(voltage)
+
+
 # ---------------------------------------------------------------------------
 # Station presets (UDP, always available)
 # ---------------------------------------------------------------------------
@@ -141,6 +211,10 @@ async def async_setup_entry(
         BuschRadioStationPresetsSensor(coordinator, entry),
     ]
     if http_coordinator is not None:
-        entities.append(BuschRadioEnergyModeSensor(coordinator, entry))
+        entities += [
+            BuschRadioEnergyModeSensor(coordinator, entry),
+            SwitchInputSensor(http_coordinator, entry),
+            MainsVoltageSensor(http_coordinator, entry),
+        ]
 
     async_add_entities(entities)
