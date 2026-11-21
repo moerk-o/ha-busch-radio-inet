@@ -505,7 +505,7 @@ async def test_two_devices_share_one_listener(
     hass: HomeAssistant, mock_config_entry
 ) -> None:
     """A second device reuses the existing SharedUDPListener (created only once)."""
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     entry2 = MockConfigEntry(
         domain="busch_radio_inet",
@@ -552,7 +552,7 @@ async def test_unloading_first_device_keeps_listener_running(
     hass: HomeAssistant, mock_config_entry
 ) -> None:
     """Unloading one device while another is still active must not stop the listener."""
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     entry2 = MockConfigEntry(
         domain="busch_radio_inet",
@@ -600,7 +600,7 @@ async def test_unloading_both_devices_stops_listener(
     hass: HomeAssistant, mock_config_entry
 ) -> None:
     """Only after the last device is removed should the listener be stopped."""
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     entry2 = MockConfigEntry(
         domain="busch_radio_inet",
@@ -706,7 +706,7 @@ async def test_setup_with_http_and_icy(
     hass: HomeAssistant, config_entry_data, device_serial, icy_mode
 ) -> None:
     """Setup with expose_http_settings + ICY creates all settings entities."""
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     entry = MockConfigEntry(
         domain="busch_radio_inet",

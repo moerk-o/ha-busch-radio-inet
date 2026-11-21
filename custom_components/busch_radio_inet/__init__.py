@@ -140,7 +140,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     http_coordinator: HttpSettingsCoordinator | None = None
     if expose_http:
         http_client = HttpSettingsClient(hass, host)
-        http_coordinator = HttpSettingsCoordinator(hass, http_client, http_poll_interval)
+        http_coordinator = HttpSettingsCoordinator(
+            hass, entry, http_client, http_poll_interval
+        )
         # Start in background – does not block main setup if HTTP is unavailable.
         # Entities will be 'unavailable' until the first successful fetch.
         hass.async_create_task(http_coordinator.async_refresh())

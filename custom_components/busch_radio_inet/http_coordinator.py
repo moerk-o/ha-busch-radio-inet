@@ -3,6 +3,7 @@
 import logging
 from datetime import timedelta
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -18,12 +19,14 @@ class HttpSettingsCoordinator(DataUpdateCoordinator[dict[str, str]]):
     def __init__(
         self,
         hass: HomeAssistant,
+        config_entry: ConfigEntry,
         client: HttpSettingsClient,
         poll_interval_minutes: int,
     ) -> None:
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=config_entry,
             name="Busch-Radio iNet HTTP Settings",
             update_interval=timedelta(minutes=poll_interval_minutes),
         )
