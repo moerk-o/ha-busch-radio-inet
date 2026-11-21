@@ -4,7 +4,7 @@ import pytest
 from datetime import time as dt_time
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 
 # ---------------------------------------------------------------------------

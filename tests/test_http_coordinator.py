@@ -7,14 +7,26 @@ from homeassistant.exceptions import HomeAssistantError
 from custom_components.busch_radio_inet.http_coordinator import HttpSettingsCoordinator
 
 
-def make_coordinator(poll_interval=60):
+def make_coordinator(poll_interval=60, entry=None):
     hass = MagicMock()
     hass.bus = MagicMock()
     client = MagicMock()
     client.async_get_config = AsyncMock(return_value={"bb": "100", "co": "80"})
     client.async_post_general = AsyncMock()
-    coord = HttpSettingsCoordinator(hass, client, poll_interval)
+    coord = HttpSettingsCoordinator(hass, entry or MagicMock(), client, poll_interval)
     return coord, hass, client
+
+
+# ===========================================================================
+# Construction
+# ===========================================================================
+
+
+def test_coordinator_belongs_to_the_given_config_entry():
+    """The entry is passed explicitly, not picked up from Home Assistant's context."""
+    entry = MagicMock()
+    coord, _, _ = make_coordinator(entry=entry)
+    assert coord.config_entry is entry
 
 
 # ===========================================================================
