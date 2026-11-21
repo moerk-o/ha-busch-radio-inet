@@ -1,3 +1,21 @@
+### 🐞 Bug Fixes
+
+- **Switch input sensors are available again** – Since v1.3.0 the `Switch Input` and
+  `Mains Voltage` sensors stayed unavailable: Home Assistant rejected both because they
+  were not declared as enum sensors. They now show their value. Thanks to @anticharm01
+  for reporting it. ([#12](https://github.com/moerk-o/ha-busch-radio-inet/issues/12))
+
+### 🔧 Infrastructure
+
+- Tests now run on `pytest-homeassistant`, the official test package of Home Assistant,
+  against Home Assistant 2026.11 on Python 3.14.
+
+**Full Changelog**: https://github.com/moerk-o/ha-busch-radio-inet/compare/v1.3.0...v1.3.1
+
+---
+
+# v1.3.0
+
 ### ✨ New Features
 
 - **Switch input is visible again** – The two diagnostic sensors are back and now show
