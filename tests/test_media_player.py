@@ -1,6 +1,7 @@
 """Tests for BuschRadioMediaPlayer."""
 
 import pytest
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.components.media_player import (
@@ -8,6 +9,7 @@ from homeassistant.components.media_player import (
     MediaPlayerState,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
 
 from custom_components.busch_radio_inet.coordinator import BuschRadioCoordinator
@@ -701,27 +703,12 @@ _FULL_HTTP_CONFIG = {
 }
 
 
-@pytest.mark.parametrize("icy_mode", ["live", "interval"])
-async def test_setup_with_http_and_icy(
-    hass: HomeAssistant, config_entry_data, device_serial, icy_mode
-) -> None:
-    """Setup with expose_http_settings + ICY creates all settings entities."""
-    from pytest_homeassistant.common import MockConfigEntry
+@contextmanager
+def _offline_setup(http_config: dict[str, str]):
+    """Patch the device communication so an entry sets up without a network.
 
-    entry = MockConfigEntry(
-        domain="busch_radio_inet",
-        data=config_entry_data,
-        options={
-            "expose_http_settings": True,
-            "http_poll_interval": 5,
-            "icy_enabled": True,
-            "icy_mode": icy_mode,
-            "icy_interval": 60,
-        },
-        unique_id=device_serial,
-        version=1,
-    )
-
+    The HTTP settings client answers every read with `http_config`.
+    """
     with patch(
         "custom_components.busch_radio_inet.SharedUDPListener"
     ) as mock_listener_cls, patch(
@@ -748,9 +735,34 @@ async def test_setup_with_http_and_icy(
         mock_client_cls.return_value = mock_client
 
         mock_http = MagicMock()
-        mock_http.async_get_config = AsyncMock(return_value=dict(_FULL_HTTP_CONFIG))
+        mock_http.async_get_config = AsyncMock(return_value=dict(http_config))
         mock_http_cls.return_value = mock_http
 
+        yield
+
+
+@pytest.mark.parametrize("icy_mode", ["live", "interval"])
+async def test_setup_with_http_and_icy(
+    hass: HomeAssistant, config_entry_data, device_serial, icy_mode
+) -> None:
+    """Setup with expose_http_settings + ICY creates all settings entities."""
+    from pytest_homeassistant.common import MockConfigEntry
+
+    entry = MockConfigEntry(
+        domain="busch_radio_inet",
+        data=config_entry_data,
+        options={
+            "expose_http_settings": True,
+            "http_poll_interval": 5,
+            "icy_enabled": True,
+            "icy_mode": icy_mode,
+            "icy_interval": 60,
+        },
+        unique_id=device_serial,
+        version=1,
+    )
+
+    with _offline_setup(_FULL_HTTP_CONFIG):
         entry.add_to_hass(hass)
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
@@ -764,6 +776,52 @@ async def test_setup_with_http_and_icy(
         assert hass.states.async_all("sensor")
 
         # Clean unload (also stops the HTTP coordinator's update timer)
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_switch_input_sensors_reach_the_state_machine_as_enums(
+    hass: HomeAssistant, config_entry_data, device_serial
+) -> None:
+    """Both switch-input sensors are added, as enum sensors with their options.
+
+    Home Assistant rejects a sensor that has options but not the enum device
+    class when it writes the first state, so the entity never appears (#12).
+    """
+    from pytest_homeassistant.common import MockConfigEntry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data=config_entry_data,
+        options={"expose_http_settings": True, "icy_enabled": False},
+        unique_id=device_serial,
+        version=1,
+    )
+    # Both fields carry the combined value: 230V (1 * 4) + push-button (1).
+    http_config = {**_FULL_HTTP_CONFIG, "sw": "5", "sp": "5"}
+
+    with _offline_setup(http_config):
+        entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        registry = er.async_get(hass)
+        expected = {
+            f"{device_serial}_http_sw": (
+                "Push-button",
+                ["Switch", "Push-button", "Automatic"],
+            ),
+            f"{device_serial}_http_sp": ("230V", ["110V", "230V"]),
+        }
+        for unique_id, (value, options) in expected.items():
+            entity_id = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+            assert entity_id is not None, unique_id
+            state = hass.states.get(entity_id)
+            assert state is not None, f"{entity_id} was not added"
+            assert state.state == value
+            assert state.attributes["device_class"] == "enum"
+            assert state.attributes["options"] == options
+
         assert await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
 

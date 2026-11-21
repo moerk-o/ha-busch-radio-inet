@@ -1,6 +1,6 @@
 # Technical Reference: Home Assistant Integration `busch_radio_inet`
 
-**Version:** 1.14.2
+**Version:** 1.14.3
 **Date:** November 2026
 **Target Platform:** Home Assistant Custom Integration
 **Development Language:** English (code, comments, variables)
@@ -317,7 +317,7 @@ The "device contradicts the decoding" argument is void as well. The form renders
 
 **Why this approach:** Setting the form values `sw=2 sp=1` stores `6`; posting the decoded values for a stored `4` leaves it at `4`. Both verified. Omitting the fields is still not an option (the device resets them to default), so decoding is the only way to leave the setting alone.
 
-**Consequences:** The two diagnostic sensors are back, now showing `Switch`/`Push-button`/`Automatic` and `110V`/`230V`. They stay **read-only**: the setting describes physical wiring and belongs in the device's web interface. A value that is not a known combination reads as unknown rather than being guessed at, and is passed through unchanged on writes.
+**Consequences:** The two diagnostic sensors are back, now showing `Switch`/`Push-button`/`Automatic` and `110V`/`230V`. They stay **read-only**: the setting describes physical wiring and belongs in the device's web interface. A value that is not a known combination reads as unknown rather than being guessed at, and is passed through unchanged on writes. Both are enum sensors (`device_class: enum`) that list their values as `options`: Home Assistant rejects a sensor with options but without that device class when it is added, which kept both sensors from appearing in v1.3.0 (issue #12).
 
 ---
 
@@ -532,6 +532,7 @@ The release process follows the central `RELEASE_GUIDE.md` (HACS ZIP release, ve
 
 | Doc Version | Date | Changes |
 |-------------|------|---------|
+| 1.14.3 | November 2026 | "Switch input, measured": both sensors are enum sensors, which Home Assistant requires for a sensor with options (issue #12) |
 | 1.14.2 | November 2026 | §6.8: tests moved to the official `pytest-homeassistant` package (Python 3.14); explained why the test copy is the one that runs |
 | 1.14.1 | September 2026 | §3.3: the StreamTitle split is now one shared function in `icy_client.py` instead of two identical implementations |
 | 1.14.0 | September 2026 | §3.3: artwork results are validated against the credited artist — a relevance score alone let non-song stream text produce wrong covers (issue #4) |
