@@ -576,7 +576,7 @@ async def test_reconfigure_flow_rejects_host_of_another_entry(
     hass: HomeAssistant, mock_config_entry
 ) -> None:
     """Two entries pointing at the same radio would collide in the UDP listener."""
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     mock_config_entry.add_to_hass(hass)
     second_entry = MockConfigEntry(

@@ -9,13 +9,8 @@ project_root = os.path.dirname(os.path.dirname(__file__))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-pytest_plugins = "pytest_homeassistant_custom_component"
-
-
-@pytest.fixture(autouse=True)
-def auto_enable_custom_integrations(enable_custom_integrations):
-    """Enable loading of custom integrations in Home Assistant."""
-    return enable_custom_integrations
+# The pytest-homeassistant plugin loads itself and its `hass` fixture enables
+# custom integrations by default, so neither needs to be set up here.
 
 
 @pytest.fixture(autouse=True)
@@ -82,7 +77,7 @@ def config_entry_data(device_host, device_port):
 
 @pytest.fixture
 def mock_config_entry(config_entry_data, device_serial):
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     return MockConfigEntry(
         domain="busch_radio_inet",
