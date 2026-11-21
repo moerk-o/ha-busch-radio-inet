@@ -1,6 +1,6 @@
 """Sensor entities for Busch-Radio iNet (diagnostic, read-only)."""
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
@@ -68,8 +68,12 @@ class _SwitchInputSensor(CoordinatorEntity[HttpSettingsCoordinator], SensorEntit
     Read-only on purpose: the switch input describes how the terminal is wired,
     so it belongs in the device's own web interface, not behind a dashboard
     control.
+
+    Each subclass lists its possible values in `_attr_options`; Home Assistant
+    only accepts that together with the enum device class.
     """
 
+    _attr_device_class = SensorDeviceClass.ENUM
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_has_entity_name = True
 
